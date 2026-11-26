@@ -384,7 +384,9 @@ function renderApp() {
           <div class="title">Pedagoglar Reytingi</div>
           <small>Norin tuman ixtisoslashtirilgan maktabi</small>
         </div>
-        ${tabs.map(([id, label]) => `<button class="nav-btn ${CUR_TAB === id ? 'on' : ''}" data-tab="${id}">${label}</button>`).join('')}
+        <div class="nav-tabs-wrapper">
+          ${tabs.map(([id, label]) => `<button class="nav-btn ${CUR_TAB === id ? 'on' : ''}" data-tab="${id}">${label}</button>`).join('')}
+        </div>
         <div class="sp"></div>
         <div class="who">
           <div><span class="badge-role">${ROLE[ME.role] || ME.role}</span></div>
