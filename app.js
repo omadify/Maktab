@@ -201,8 +201,8 @@ function getRanking() {
   return res;
 }
 
-// Avtomatik login yaratish
-function makeLogin(name) {
+// Avtomatik login yaratish (qotmaslik uchun Set orqali O(1) qidiruv)
+function makeLogin(name, existingLogins = null) {
   const tr = {
     'sh':'sh','ch':'ch','yo':'yo','yu':'yu','ya':'ya','ye':'ye',
     "o'":'o',"g'":'g','o‘':'o','g‘':'g','o`':'o','g`':'g',
@@ -212,15 +212,17 @@ function makeLogin(name) {
     'ц':'ts','ч':'ch','ш':'sh','щ':'sh','ъ':'','ы':'i','ь':'','э':'e',
     'ю':'yu','я':'ya','ў':'o','ғ':'g','қ':'q'
   };
-  let s = name.toLowerCase();
+  let s = String(name || '').toLowerCase();
   for (const [k, v] of Object.entries(tr)) s = s.split(k).join(v);
   const words = s.match(/[a-z]+/g) || [];
   let base = words.length > 1 ? `${words[0][0]}.${words[1]}`.slice(0, 18) : (words[0] || 'pedagog').slice(0, 15);
   let login = base;
   let idx = 2;
-  while (STATE.users.some(u => u.login === login)) {
+  const isTaken = l => existingLogins ? existingLogins.has(l) : STATE.users.some(u => u.login === l);
+  while (isTaken(login) && idx < 1000) {
     login = `${base}${idx++}`;
   }
+  if (existingLogins) existingLogins.add(login);
   return login;
 }
 
@@ -874,18 +876,30 @@ function renderUsers(el, creds = null) {
     <div id="cred-zone">${creds ? renderCredBox(creds) : ''}</div>
     
     <div class="card" style="border-top:4px solid var(--teal)">
-      <h3>⚡ Pedagoglarni Ommaviy Yuklash (Excel / CSV)</h3>
-      <p class="sub">Excel (.xlsx, .csv) faylini yuklang yoki ro‘yxatni matn sifatida kiriting. Tizim avtomatik login va vaqtinchalik xavfsiz parol yaratadi. Yuklangan fayl brauzerda o‘qilib darhol tozalanadi (serverda 0 KB joy oladi).</p>
+      <h3>⚡ Pedagoglarni Ommaviy Yuklash (Excel / CSV / Matn)</h3>
+      <p class="sub">
+        Pedagoglarni <b>biriktirilgan sinfi</b> (sinf rahbarligi) va fani bilan birgalikda ommaviy yuklang. Tizim har bir pedagog uchun avtomatik login va xavfsiz vaqtinchalik parol yaratadi.
+      </p>
+
+      <div style="background:var(--ln);padding:12px;border-radius:8px;margin:12px 0;font-size:13px">
+        <b>📋 Kiritish formati (Har bir qatorda):</b><br>
+        <code>F.I.Sh.; Sinf; Fan</code> (yoki <code>F.I.Sh.; Sinf</code>)<br>
+        <span class="sub">Misol:</span><br>
+        <code>Karimov Anvar Jo‘rayevich; 10-A sinf; Matematika</code><br>
+        <code>Rasulova Ziyoda Akramovna; 9-B sinf; Ingliz tili</code><br>
+        <code>Sobirov Jamshid Rustamovich; 11-A sinf; Fizika</code>
+      </div>
       
       <div class="row" style="margin:12px 0">
         <input type="file" id="uf" accept=".xlsx,.csv,.txt" style="display:none">
-        <button class="p" type="button" id="ub">📁 Excel / CSV faylini tanlash</button>
+        <button class="p" type="button" id="ub">📁 Excel (.xlsx) / CSV faylini tanlash</button>
         <span id="fn" class="sub" style="margin-left:8px"></span>
       </div>
 
-      <p class="sub">Yoki matn sifatida kiriting (Har bir qatorda: <code>F.I.Sh.; Fan</code>):</p>
-      <textarea id="bt" rows="4" placeholder="Karimov Anvar Jo‘rayevich; Matematika&#10;Rasulova Ziyoda; Ingliz tili&#10;Sobirov Jamshid; Fizika"></textarea>
-      <div class="row" style="margin-top:10px">
+      <p class="sub">Yoki to‘g‘ridan-to‘g‘ri ro‘yxat matnini bu yerga joylashtiring:</p>
+      <textarea id="bt" rows="5" placeholder="Karimov Anvar Jo‘rayevich; 10-A sinf; Matematika&#10;Rasulova Ziyoda Akramovna; 9-B sinf; Ingliz tili&#10;Sobirov Jamshid Rustamovich; 11-A sinf; Fizika"></textarea>
+      
+      <div class="row" style="margin-top:12px">
         <button class="p" id="bb">⚡ Barchasini Supabase bazasiga kiritish va parollarni generatsiya qilish</button>
       </div>
     </div>
@@ -894,7 +908,8 @@ function renderUsers(el, creds = null) {
       <h3>Bitta pedagog qo‘shish</h3>
       <form id="nf" class="row">
         <input id="nn" placeholder="F.I.Sh. (To‘liq)" required style="flex:2">
-        <input id="ns" placeholder="Fan" style="flex:1">
+        <input id="nc" placeholder="Sinfi (masalan: 10-A sinf)" style="flex:1">
+        <input id="ns" placeholder="Fani (masalan: Matematika)" style="flex:1">
         <input id="nl" placeholder="Login (bo‘sh qolsa avtomatik)" style="flex:1">
         <button class="p" type="submit" id="add-one-btn">Qo‘shish</button>
       </form>
@@ -904,13 +919,14 @@ function renderUsers(el, creds = null) {
       <h3>Barcha xodimlar va pedagoglar ro‘yxati</h3>
       <table>
         <thead>
-          <tr><th>Login</th><th>F.I.Sh. / Fan</th><th>Rol</th><th>Reytingda</th><th>Amallar</th></tr>
+          <tr><th>Login</th><th>F.I.Sh.</th><th>Sinf / Fan / Lavozim</th><th>Rol</th><th>Reytingda</th><th>Amallar</th></tr>
         </thead>
         <tbody>
           ${users.map(u => `
             <tr style="${u.active ? '' : 'opacity:.5'}">
               <td><b>${esc(u.login)}</b></td>
-              <td>${esc(u.name)} <div class="sub">${esc(u.subject)}</div></td>
+              <td>${esc(u.name)}</td>
+              <td><span class="sub" style="font-weight:600;color:var(--teal)">${esc(u.subject || '—')}</span></td>
               <td>
                 <select onchange="updateUserRole(${u.id}, this.value)">
                   ${Object.entries(ROLE).map(([r, l]) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${l}</option>`).join('')}
@@ -958,19 +974,23 @@ function renderUsers(el, creds = null) {
     const lines = val.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
     const toInsert = [];
     const credsList = [];
+    const existingLogins = new Set(STATE.users.map(u => u.login));
 
     for (const line of lines) {
       const delim = line.includes(';') ? ';' : (line.includes('\t') ? '\t' : ',');
       const parts = line.split(delim).map(p => p.trim());
       if (!parts[0]) continue;
       const name = parts[0];
-      const subject = parts[1] || '';
-      const login = makeLogin(name);
+      const sinf = parts[1] || '';
+      const fan = parts[2] || '';
+      const subjectDesc = [sinf, fan].filter(Boolean).join(' | ');
+
+      const login = makeLogin(name, existingLogins);
       const pw = tempPw();
       const u = {
         login,
         name,
-        subject,
+        subject: subjectDesc,
         role: 'teacher',
         ranked: 1,
         pw,
@@ -985,7 +1005,7 @@ function renderUsers(el, creds = null) {
 
     const btn = $('#bb');
     btn.disabled = true;
-    btn.textContent = 'Supabase-ga yozilmoqda…';
+    btn.textContent = `Supabase-ga yozilmoqda (${toInsert.length} nafar)…`;
 
     try {
       await api.insertUsers(toInsert);
@@ -1003,13 +1023,15 @@ function renderUsers(el, creds = null) {
   $('#nf').onsubmit = async e => {
     e.preventDefault();
     const name = $('#nn').value.trim();
-    const subject = $('#ns').value.trim();
+    const sinf = $('#nc').value.trim();
+    const fan = $('#ns').value.trim();
+    const subjectDesc = [sinf, fan].filter(Boolean).join(' | ');
     const login = $('#nl').value.trim().toLowerCase() || makeLogin(name);
     const pw = tempPw();
     const u = {
       login,
       name,
-      subject,
+      subject: subjectDesc,
       role: 'teacher',
       ranked: 1,
       pw,
