@@ -3,7 +3,7 @@
 
 const CFG = {
   SUPABASE_URL: localStorage.getItem('supabase_url') || 'https://melqpmfjwqivylnmucwc.supabase.co',
-  SUPABASE_KEY: localStorage.getItem('supabase_key') || '',
+  SUPABASE_KEY: localStorage.getItem('supabase_key') || 'sb_publishable_EGUiTu1TGcU1EnhZqKkptQ_Wk2jyQpt',
   STORAGE_KEY: 'maktab_reyting_v1'
 };
 
