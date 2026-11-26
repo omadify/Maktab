@@ -167,12 +167,6 @@ function renderLogin() {
           <p class="err" id="le"></p>
           <button class="p" type="submit" style="width:100%;margin-top:10px">Kirish</button>
         </form>
-        <div style="margin-top:18px;padding:12px;background:var(--teal-soft);border-radius:8px;font-size:12px">
-          <b>Boshlang‘ich kirish ma’lumotlari:</b><br>
-          • Direktor: <code>direktor</code> / <code>Direktor#2026</code><br>
-          • IT Admin: <code>it_admin</code> / <code>Admin#2026</code><br>
-          • Mas‘ullar: <code>n.meliboyeva</code> / <code>Masul#2026</code>
-        </div>
       </div>
     </div>
   `;
