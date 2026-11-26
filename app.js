@@ -60,8 +60,15 @@ const api = {
     return res.status !== 204 ? res.json() : null;
   },
 
+  async loginRpc(login, pw) {
+    return this.req('rpc/login_user', {
+      method: 'POST',
+      body: JSON.stringify({ p_login: login, p_pw: pw })
+    });
+  },
+
   async getUsers() {
-    return this.req('users?select=*&order=id.asc');
+    return this.req('users?select=id,login,name,subject,role,ranked,active,must_change&order=id.asc');
   },
 
   async getEntries() {
@@ -308,16 +315,16 @@ function renderLogin() {
     const p = $('#pw').value;
 
     try {
-      await syncData();
-      const u = STATE.users.find(x => x.login === l && x.pw === p && x.active);
-      if (!u) {
+      const res = await api.loginRpc(l, p);
+      if (!res || !res.length) {
         $('#le').textContent = 'Login yoki parol noto‘g‘ri!';
         btn.disabled = false;
         btn.textContent = 'Kirish';
         return;
       }
-      ME = u;
+      ME = res[0];
       saveSession(ME);
+      await syncData();
       CUR_TAB = '';
       render();
     } catch (err) {
@@ -351,16 +358,24 @@ function renderPasswordChange(forced) {
   if (!forced) $('#pc').onclick = () => render();
   $('#pf').onsubmit = async e => {
     e.preventDefault();
-    if ($('#po').value !== ME.pw) return $('#pe').textContent = 'Joriy parol noto‘g‘ri!';
+    const oldP = $('#po').value;
     const np = $('#pn').value;
     if (np.length < 8) return $('#pe').textContent = 'Parol kamida 8 belgi bo‘lsin!';
 
     const btn = $('#p-btn');
     btn.disabled = true;
-    btn.textContent = 'Saqlanmoqda…';
+    btn.textContent = 'Tekshirilmoqda…';
+
     try {
+      const chk = await api.loginRpc(ME.login, oldP);
+      if (!chk || !chk.length) {
+        $('#pe').textContent = 'Joriy parol noto‘g‘ri!';
+        btn.disabled = false;
+        btn.textContent = 'Saqlash';
+        return;
+      }
+      btn.textContent = 'Saqlanmoqda…';
       await api.updateUser(ME.id, { pw: np, must_change: 0 });
-      ME.pw = np;
       ME.must_change = 0;
       saveSession(ME);
       alert('Parol muvaffaqiyatli yangilandi!');
@@ -545,6 +560,7 @@ function renderAdd(el) {
 
         <label style="margin-top:12px">Soni (o‘quvchilar yoki sinflar soni)</label>
         <input id="aq" type="number" min="1" max="50" value="1" required style="max-width:140px">
+        <div id="apts-info" class="sub" style="margin-top:6px;font-weight:600;color:var(--teal)"></div>
 
         <label>Tavsif (nomi, tashkilot, sinf/chorak, sertifikat raqami va h.k.)</label>
         <textarea id="ad" placeholder="Masalan: 10-A sinf o‘quvchisi Anvarov Bobur IELTS 7.5 sertifikatini oldi..." required rows="3"></textarea>
@@ -564,25 +580,52 @@ function renderAdd(el) {
     </div>
   `;
 
+  function updatePtsPreview() {
+    const indId = Number($('#ai').value);
+    const ind = IMAP[indId];
+    if (!ind || !$('#at').selectedOptions[0]) {
+      $('#apts-info').innerHTML = '';
+      return;
+    }
+    const selType = $('#at').selectedOptions[0];
+    const unitPts = Number(selType.dataset.pts || 0);
+    const qty = Math.max(1, Number($('#aq').value) || 1);
+    const rawPts = unitPts * qty;
+    const finalPts = Math.min(rawPts, ind.max);
+
+    let info = `Hisoblangan ball: <b>${finalPts} ball</b> (${qty} x ${unitPts} ball, mezon maksimal chegarasi: ${ind.max} ball)`;
+    if (rawPts > ind.max) {
+      info += ` <span style="color:var(--red)">(Diqqat: jami ${rawPts} ball chegaradan oshgani uchun mezon bo‘yicha ${ind.max} ball bilan cheklandi)</span>`;
+    }
+    $('#apts-info').innerHTML = info;
+  }
+
   $('#ai').onchange = () => {
     const id = Number($('#ai').value);
     const ind = IMAP[id];
     if (!ind) {
       $('#at-wrap').style.display = 'none';
+      $('#apts-info').innerHTML = '';
       return;
     }
     $('#at-wrap').style.display = 'block';
     $('#at').innerHTML = ind.types.map(t => `<option value="${esc(t[0])}" data-pts="${t[1]}">${esc(t[0])} — +${t[1]} ball</option>`).join('');
     $('#adoc').innerHTML = `<b>Kerakli hujjat:</b> ${esc(ind.doc)}<br><b>Mas’ul baholovchi:</b> ${esc(ind.respStr)}`;
+    updatePtsPreview();
   };
+
+  $('#at').onchange = updatePtsPreview;
+  $('#aq').oninput = updatePtsPreview;
 
   $('#af').onsubmit = async e => {
     e.preventDefault();
     const indId = Number($('#ai').value);
     if (!indId) return alert('Iltimos, indikatorni tanlang!');
+    const ind = IMAP[indId];
     const selType = $('#at').selectedOptions[0];
-    const qty = Number($('#aq').value);
-    const pts = Number(selType.dataset.pts) * qty;
+    const qty = Math.max(1, Number($('#aq').value) || 1);
+    const rawPts = Number(selType.dataset.pts) * qty;
+    const pts = ind ? Math.min(rawPts, ind.max) : rawPts;
     const fileInp = $('#af-file').files[0];
 
     const btn = $('#sub-btn');
@@ -1053,9 +1096,19 @@ function renderUsers(el, creds = null) {
       btn.textContent = 'Qo‘shish';
     }
   };
+
+  const dlCredsBtn = $('#dl-creds-btn');
+  if (dlCredsBtn) {
+    dlCredsBtn.addEventListener('click', () => {
+      downloadCredsCSV(LAST_GENERATED_CREDS);
+    });
+  }
 }
 
+let LAST_GENERATED_CREDS = [];
+
 function renderCredBox(list) {
+  LAST_GENERATED_CREDS = list || [];
   return `
     <div class="card cred-banner">
       <h3 style="color:var(--teal)">✅ ${list.length} ta pedagog uchun login va parollar yaratildi!</h3>
@@ -1068,7 +1121,7 @@ function renderCredBox(list) {
           </tbody>
         </table>
       </div>
-      <button class="p" onclick="downloadCredsCSV(${JSON.stringify(list).replace(/"/g, '&quot;')})">📥 Parollarni CSV faylda yuklab olish</button>
+      <button class="p" id="dl-creds-btn" type="button">📥 Parollarni CSV faylda yuklab olish</button>
     </div>
   `;
 }
@@ -1154,8 +1207,10 @@ window.toggleUserActive = async uid => {
   }
 };
 
-window.downloadCredsCSV = list => {
-  const b = new Blob(['\ufeffLogin;Vaqtinchalik Parol;F.I.Sh.;Fan\n' + list.map(c => `${c.login};${c.pw};${c.name};${c.subject || ''}`).join('\n')], { type: 'text/csv;charset=utf-8' });
+window.downloadCredsCSV = (list = LAST_GENERATED_CREDS) => {
+  const data = (list && list.length) ? list : LAST_GENERATED_CREDS;
+  if (!data || !data.length) return alert('Yuklab olish uchun ro‘yxat topilmadi!');
+  const b = new Blob(['\ufeffLogin;Vaqtinchalik Parol;F.I.Sh.;Fan\n' + data.map(c => `${c.login};${c.pw};${c.name};${c.subject || ''}`).join('\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(b);
   a.download = 'pedagoglar_parollari.csv';

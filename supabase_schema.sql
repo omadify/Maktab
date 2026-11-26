@@ -14,12 +14,6 @@ create table if not exists public.users (
   created double precision not null default extract(epoch from now())
 );
 
-create table if not exists public.sessions (
-  h text primary key,
-  uid bigint not null references public.users(id) on delete cascade,
-  exp double precision not null
-);
-
 create table if not exists public.entries (
   id bigint generated always as identity primary key,
   uid bigint not null references public.users(id) on delete cascade,
@@ -38,21 +32,46 @@ create table if not exists public.entries (
 );
 
 create index if not exists ix_entries_uid_status on public.entries (uid, status);
-create index if not exists ix_sessions_exp on public.sessions (exp);
 
-create table if not exists public.audit_logs (
-  id bigint generated always as identity primary key,
-  actor_id bigint,
-  actor_name text not null default '',
-  action text not null,
-  target text not null default '',
-  details text not null default '',
-  created double precision not null default extract(epoch from now())
-);
-
-create index if not exists ix_audit_created on public.audit_logs (created desc);
-
--- Supabase Storage bucket (tasdiqlovchi skanlar va PDF fayllar uchun)
+-- Supabase Storage bucket (tasdiqlovchi skanlar va PDF fayllar uchun, public = true)
 insert into storage.buckets (id, name, public)
-values ('proofs', 'proofs', false)
-on conflict (id) do nothing;
+values ('proofs', 'proofs', true)
+on conflict (id) do update set public = true;
+
+-- Boshlang‘ich rasmiy akkauntlar (direktor, it_admin va 4 ta mas‘ul)
+insert into public.users (login, name, subject, role, ranked, pw, active, must_change) values
+  ('direktor', 'Alisher Xolmatov', 'Maktab direktori', 'director', 0, 'Direktor#2026', 1, 0),
+  ('it_admin', 'Hasanboy Toshboyev', 'Informatika va IT', 'it_admin', 0, 'Admin#2026', 1, 0),
+  ('n.meliboyeva', 'N.Meliboyeva', 'O‘IBDO‘ / Metodist', 'reviewer', 0, 'Masul#2026', 1, 0),
+  ('d.rasulova', 'D.Rasulova', 'O‘IBDO‘ / Metodist', 'reviewer', 0, 'Masul#2026', 1, 0),
+  ('s.murodov', 'S.Murodov', 'Aniq fanlar metodisti', 'reviewer', 0, 'Masul#2026', 1, 0),
+  ('a.karimjonov', 'A.Karimjonov', 'MMIBDO‘', 'reviewer', 0, 'Masul#2026', 1, 0)
+on conflict (login) do nothing;
+
+-- Xavfsiz login RPC funksiyasi (barcha parollar brauzerga ochiq ketmasligi uchun)
+create or replace function public.login_user(p_login text, p_pw text)
+returns table (
+  id bigint,
+  login text,
+  name text,
+  subject text,
+  role text,
+  ranked integer,
+  active integer,
+  must_change integer
+)
+language plpgsql
+security definer
+as $$
+begin
+  return query
+  select u.id, u.login, u.name, u.subject, u.role, u.ranked, u.active, u.must_change
+  from public.users u
+  where lower(trim(u.login)) = lower(trim(p_login))
+    and u.pw = p_pw
+    and u.active = 1
+  limit 1;
+end;
+$$;
+
+grant execute on function public.login_user(text, text) to anon, authenticated, service_role;
