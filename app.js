@@ -1,5 +1,5 @@
 // Norin tuman ixtisoslashtirilgan maktabi — Pedagoglar reyting platformasi (26-AF buyruq)
-// 100% Serverless & Ultra-yengil Dinamik Frontend (Supabase REST API + Storage integratsiyasi)
+// 100% Serverless & Ultra-yengil Dinamik Frontend (Supabase REST API + RPC + Storage integratsiyasi)
 
 const CFG = {
   SUPABASE_URL: 'https://melqpmfjwqivylnmucwc.supabase.co',
@@ -41,7 +41,7 @@ const ROLE = {
   director: 'Maktab direktori'
 };
 
-// Supabase REST va Storage API mijozi
+// Supabase REST, RPC va Storage API mijozi
 const api = {
   async req(endpoint, options = {}) {
     const url = `${CFG.SUPABASE_URL}/rest/v1/${endpoint}`;
@@ -60,15 +60,24 @@ const api = {
     return res.status !== 204 ? res.json() : null;
   },
 
-  async loginRpc(login, pw) {
-    return this.req('rpc/login_user', {
+  async loginUser(login, pw) {
+    const rows = await this.req('rpc/login_user', {
       method: 'POST',
       body: JSON.stringify({ p_login: login, p_pw: pw })
+    });
+    return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+  },
+
+  async changePassword(uid, oldPw, newPw) {
+    return this.req('rpc/change_user_password', {
+      method: 'POST',
+      body: JSON.stringify({ p_uid: uid, p_old_pw: oldPw, p_new_pw: newPw })
     });
   },
 
   async getUsers() {
-    return this.req('users?select=id,login,name,subject,role,ranked,active,must_change&order=id.asc');
+    // Parol (pw) ustuni brauzerga hech qachon tortilmaydi
+    return this.req('users?select=id,login,name,subject,role,ranked,active,must_change,created&order=id.asc');
   },
 
   async getEntries() {
@@ -137,14 +146,26 @@ let STATE = {
 };
 let ME = null;
 let CUR_TAB = '';
+let LAST_CREDS = [];
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+const csvCell = s => `"${String(s ?? '').replace(/"/g, '""')}"`;
 
-// Sessiyani saqlash va tiklash
+// Sessiyani saqlash va tiklash (parolsiz)
 function saveSession(user) {
   if (user) {
-    sessionStorage.setItem('maktab_user', JSON.stringify(user));
+    const safeUser = {
+      id: user.id,
+      login: user.login,
+      name: user.name,
+      subject: user.subject,
+      role: user.role,
+      ranked: user.ranked,
+      active: user.active,
+      must_change: user.must_change
+    };
+    sessionStorage.setItem('maktab_user', JSON.stringify(safeUser));
   } else {
     sessionStorage.removeItem('maktab_user');
   }
@@ -245,7 +266,6 @@ function getTabs() {
   if (!ME) return [];
   const t = [];
 
-  // 1. Maktab Direktori (Alisher Xolmatov) — Rahbariyat & 4-in-1 nazoratchi
   if (ME.role === 'director') {
     t.push(['ctl', 'Nazorat va Statistika']);
     t.push(['rev', 'Yutuqlarni Tasdiqlash (Barcha mezonlar)']);
@@ -255,14 +275,12 @@ function getTabs() {
     return t;
   }
 
-  // 2. IT Mutaxassis (Hasanboy Toshboyev) — Sof texnik boshqaruvchi
   if (ME.role === 'it_admin') {
     t.push(['users', 'Foydalanuvchilar va Excel Import']);
     t.push(['rank', 'Reyting Jadvali']);
     return t;
   }
 
-  // 3. Mas’ul Baholovchi (N.Meliboyeva, D.Rasulova, S.Murodov, A.Karimjonov)
   if (ME.role === 'reviewer') {
     t.push(['rev', 'Tasdiqlash (Mening mezonlarim)']);
     t.push(['home', 'Mening natijam']);
@@ -273,7 +291,6 @@ function getTabs() {
     return t;
   }
 
-  // 4. Pedagog (O‘qituvchi)
   t.push(['home', 'Mening natijam']);
   t.push(['add', 'Yutuq qo‘shish']);
   t.push(['rank', 'Reyting jadvali']);
@@ -309,20 +326,21 @@ function renderLogin() {
   $('#lf').onsubmit = async e => {
     e.preventDefault();
     const btn = $('#l-btn');
+    $('#le').textContent = '';
     btn.disabled = true;
     btn.textContent = 'Kirilmoqda…';
     const l = $('#lg').value.trim().toLowerCase();
     const p = $('#pw').value;
 
     try {
-      const res = await api.loginRpc(l, p);
-      if (!res || !res.length) {
+      const u = await api.loginUser(l, p);
+      if (!u) {
         $('#le').textContent = 'Login yoki parol noto‘g‘ri!';
         btn.disabled = false;
         btn.textContent = 'Kirish';
         return;
       }
-      ME = res[0];
+      ME = u;
       saveSession(ME);
       await syncData();
       CUR_TAB = '';
@@ -358,24 +376,22 @@ function renderPasswordChange(forced) {
   if (!forced) $('#pc').onclick = () => render();
   $('#pf').onsubmit = async e => {
     e.preventDefault();
-    const oldP = $('#po').value;
+    $('#pe').textContent = '';
+    const oldPw = $('#po').value;
     const np = $('#pn').value;
     if (np.length < 8) return $('#pe').textContent = 'Parol kamida 8 belgi bo‘lsin!';
 
     const btn = $('#p-btn');
     btn.disabled = true;
-    btn.textContent = 'Tekshirilmoqda…';
-
+    btn.textContent = 'Saqlanmoqda…';
     try {
-      const chk = await api.loginRpc(ME.login, oldP);
-      if (!chk || !chk.length) {
+      const ok = await api.changePassword(ME.id, oldPw, np);
+      if (!ok) {
         $('#pe').textContent = 'Joriy parol noto‘g‘ri!';
         btn.disabled = false;
         btn.textContent = 'Saqlash';
         return;
       }
-      btn.textContent = 'Saqlanmoqda…';
-      await api.updateUser(ME.id, { pw: np, must_change: 0 });
       ME.must_change = 0;
       saveSession(ME);
       alert('Parol muvaffaqiyatli yangilandi!');
@@ -523,7 +539,7 @@ function renderHome(el) {
                 <td>
                   ${esc(e.type)} × ${e.qty} ta
                   <div class="sub">${esc(e.descr)}</div>
-                  ${e.fpath ? `<a href="${e.fpath}" target="_blank" rel="noopener" class="sub" style="color:var(--teal);text-decoration:underline">📎 Tasdiqlovchi hujjat</a>` : ''}
+                  ${e.fpath ? `<a href="${esc(e.fpath)}" target="_blank" rel="noopener" class="sub" style="color:var(--teal);text-decoration:underline">📎 Tasdiqlovchi hujjat</a>` : ''}
                   ${e.note ? `<div class="sub" style="color:var(--red)">Mas’ul izohi: ${esc(e.note)}</div>` : ''}
                 </td>
                 <td><b>${e.pts} ball</b></td>
@@ -559,8 +575,10 @@ function renderAdd(el) {
         </div>
 
         <label style="margin-top:12px">Soni (o‘quvchilar yoki sinflar soni)</label>
-        <input id="aq" type="number" min="1" max="50" value="1" required style="max-width:140px">
-        <div id="apts-info" class="sub" style="margin-top:6px;font-weight:600;color:var(--teal)"></div>
+        <div class="row">
+          <input id="aq" type="number" min="1" max="50" value="1" required style="max-width:140px">
+          <span id="pts-preview" class="sub" style="font-weight:600;color:var(--teal)"></span>
+        </div>
 
         <label>Tavsif (nomi, tashkilot, sinf/chorak, sertifikat raqami va h.k.)</label>
         <textarea id="ad" placeholder="Masalan: 10-A sinf o‘quvchisi Anvarov Bobur IELTS 7.5 sertifikatini oldi..." required rows="3"></textarea>
@@ -581,23 +599,19 @@ function renderAdd(el) {
   `;
 
   function updatePtsPreview() {
-    const indId = Number($('#ai').value);
-    const ind = IMAP[indId];
-    if (!ind || !$('#at').selectedOptions[0]) {
-      $('#apts-info').innerHTML = '';
+    const id = Number($('#ai').value);
+    const ind = IMAP[id];
+    const selType = $('#at').selectedOptions[0];
+    if (!ind || !selType) {
+      $('#pts-preview').textContent = '';
       return;
     }
-    const selType = $('#at').selectedOptions[0];
-    const unitPts = Number(selType.dataset.pts || 0);
     const qty = Math.max(1, Number($('#aq').value) || 1);
-    const rawPts = unitPts * qty;
-    const finalPts = Math.min(rawPts, ind.max);
-
-    let info = `Hisoblangan ball: <b>${finalPts} ball</b> (${qty} x ${unitPts} ball, mezon maksimal chegarasi: ${ind.max} ball)`;
-    if (rawPts > ind.max) {
-      info += ` <span style="color:var(--red)">(Diqqat: jami ${rawPts} ball chegaradan oshgani uchun mezon bo‘yicha ${ind.max} ball bilan cheklandi)</span>`;
-    }
-    $('#apts-info').innerHTML = info;
+    const raw = Number(selType.dataset.pts) * qty;
+    const capped = Math.min(raw, ind.max);
+    $('#pts-preview').textContent = raw > ind.max
+      ? `Hisoblanadigan ball: +${capped} ball (mezon limiti: ${ind.max} ball)`
+      : `Hisoblanadigan ball: +${capped} ball`;
   }
 
   $('#ai').onchange = () => {
@@ -605,7 +619,7 @@ function renderAdd(el) {
     const ind = IMAP[id];
     if (!ind) {
       $('#at-wrap').style.display = 'none';
-      $('#apts-info').innerHTML = '';
+      $('#pts-preview').textContent = '';
       return;
     }
     $('#at-wrap').style.display = 'block';
@@ -620,12 +634,11 @@ function renderAdd(el) {
   $('#af').onsubmit = async e => {
     e.preventDefault();
     const indId = Number($('#ai').value);
-    if (!indId) return alert('Iltimos, indikatorni tanlang!');
     const ind = IMAP[indId];
+    if (!ind) return alert('Iltimos, indikatorni tanlang!');
     const selType = $('#at').selectedOptions[0];
     const qty = Math.max(1, Number($('#aq').value) || 1);
-    const rawPts = Number(selType.dataset.pts) * qty;
-    const pts = ind ? Math.min(rawPts, ind.max) : rawPts;
+    const pts = Math.min(Number(selType.dataset.pts) * qty, ind.max);
     const fileInp = $('#af-file').files[0];
 
     const btn = $('#sub-btn');
@@ -675,10 +688,9 @@ function renderAdd(el) {
 function renderRev(el) {
   const isDirector = ME.role === 'director';
   
-  // Mas'ul bo'lsa faqat unga biriktirilgan indikatorlar
   const pending = STATE.entries.filter(e => {
     if (e.status !== 'pending') return false;
-    if (isDirector) return true; // Direktor barchasini ko'radi (4-in-1)
+    if (isDirector) return true;
     const ind = IMAP[e.ind];
     return ind && ind.resp.includes(ME.name);
   });
@@ -707,7 +719,7 @@ function renderRev(el) {
                   <td><b>${esc(ind?.name || '')}</b><div class="sub">Mas’ul: ${esc(ind?.respStr || '')}</div></td>
                   <td>${esc(e.type)} × ${e.qty}<div class="sub">${esc(e.descr)}</div></td>
                   <td><b>+${e.pts} ball</b></td>
-                  <td>${e.fpath ? `<a href="${e.fpath}" target="_blank" rel="noopener" class="s" style="display:inline-block;padding:4px 8px;font-size:11px">📎 Hujjatni ko‘rish</a>` : '—'}</td>
+                  <td>${e.fpath ? `<a href="${esc(e.fpath)}" target="_blank" rel="noopener" class="s" style="display:inline-block;padding:4px 8px;font-size:11px">📎 Hujjatni ko‘rish</a>` : '—'}</td>
                   <td class="row">
                     ${isOwn && !isDirector ? '<span class="sub" style="color:var(--amber)">O‘zingizniki (Boshqa mas’ul yoki direktor tekshiradi)</span>' : `
                       <button class="p" style="padding:5px 12px;font-size:12px" onclick="reviewEntry(${e.id}, 'approved')">✓ Tasdiqlash</button>
@@ -808,7 +820,7 @@ function renderPort(el, targetUid = null) {
           <div style="color:#555">Reytingdagi o‘rni: <b>#${rank ? rank.rank : '—'}</b></div>
         </div>
         <div style="text-align:right">
-          <div style="font-size:24px;font-weight:800;color:var(--teal)">${k.T} ball</div>
+          <div style="font-size:24px;font-weight:800;color:#0b6b64">${k.T} ball</div>
           <div style="font-size:12px;color:#666">Maksimal: 130 ball</div>
           <div style="font-size:11px;color:#888">Sana: ${new Date().toLocaleDateString('uz-UZ')}</div>
         </div>
@@ -816,7 +828,7 @@ function renderPort(el, targetUid = null) {
 
       <table style="margin-bottom:24px">
         <thead>
-          <tr style="background:#f0f4f8">
+          <tr>
             <th>Bo‘lim</th><th>Maksimal</th><th>To‘plangan ball</th><th>Ko‘rsatkich (%)</th>
           </tr>
         </thead>
@@ -824,7 +836,7 @@ function renderPort(el, targetUid = null) {
           <tr><td><b>A bo‘lim:</b> Pedagoglar salohiyati</td><td>50</td><td><b>${k.A}</b></td><td>${Math.round(k.A/50*100)}%</td></tr>
           <tr><td><b>B bo‘lim:</b> O‘quvchilar yutuqlari</td><td>30</td><td><b>${k.B}</b></td><td>${Math.round(k.B/30*100)}%</td></tr>
           <tr><td><b>C bo‘lim:</b> Fan bo‘yicha faollik va rag‘bat</td><td>50</td><td><b>${k.C}</b></td><td>${Math.round(k.C/50*100)}%</td></tr>
-          <tr style="background:#f9fafb;font-weight:700"><td>JAMI REYTING BALI</td><td>130</td><td><span style="color:var(--teal)">${k.T}</span></td><td>${Math.round(k.T/130*100)}%</td></tr>
+          <tr style="background:#f9fafb;font-weight:700"><td>JAMI REYTING BALI</td><td>130</td><td><span style="color:#0b6b64">${k.T}</span></td><td>${Math.round(k.T/130*100)}%</td></tr>
         </tbody>
       </table>
 
@@ -909,6 +921,7 @@ function renderCtl(el) {
 // Tab: Foydalanuvchilar (IT Mutaxassis & Direktor uchun)
 function renderUsers(el, creds = null) {
   const users = STATE.users;
+  LAST_CREDS = creds || [];
 
   el.innerHTML = `
     <div class="page-head">
@@ -916,7 +929,7 @@ function renderUsers(el, creds = null) {
       <div class="sub">Barcha ma’lumotlar Supabase PostgreSQL markaziy bazasida saqlanadi.</div>
     </div>
     
-    <div id="cred-zone">${creds ? renderCredBox(creds) : ''}</div>
+    <div id="cred-zone">${creds && creds.length ? renderCredBox(creds) : ''}</div>
     
     <div class="card" style="border-top:4px solid var(--teal)">
       <h3>⚡ Pedagoglarni Ommaviy Yuklash (Excel / CSV / Matn)</h3>
@@ -986,6 +999,11 @@ function renderUsers(el, creds = null) {
       </table>
     </div>
   `;
+
+  const dlBtn = $('#dl-creds-btn');
+  if (dlBtn) {
+    dlBtn.addEventListener('click', () => downloadCredsCSV(LAST_CREDS));
+  }
 
   $('#ub').onclick = () => $('#uf').click();
   $('#uf').onchange = e => {
@@ -1096,19 +1114,9 @@ function renderUsers(el, creds = null) {
       btn.textContent = 'Qo‘shish';
     }
   };
-
-  const dlCredsBtn = $('#dl-creds-btn');
-  if (dlCredsBtn) {
-    dlCredsBtn.addEventListener('click', () => {
-      downloadCredsCSV(LAST_GENERATED_CREDS);
-    });
-  }
 }
 
-let LAST_GENERATED_CREDS = [];
-
 function renderCredBox(list) {
-  LAST_GENERATED_CREDS = list || [];
   return `
     <div class="card cred-banner">
       <h3 style="color:var(--teal)">✅ ${list.length} ta pedagog uchun login va parollar yaratildi!</h3>
@@ -1121,7 +1129,7 @@ function renderCredBox(list) {
           </tbody>
         </table>
       </div>
-      <button class="p" id="dl-creds-btn" type="button">📥 Parollarni CSV faylda yuklab olish</button>
+      <button class="p" type="button" id="dl-creds-btn">📥 Parollarni CSV faylda yuklab olish</button>
     </div>
   `;
 }
@@ -1165,7 +1173,6 @@ window.resetUserPw = async uid => {
   const np = tempPw();
   try {
     await api.updateUser(uid, { pw: np, must_change: 1 });
-    u.pw = np;
     u.must_change = 1;
     alert(`Yangi vaqtinchalik parol berildi:\nLogin: ${u.login}\nParol: ${np}`);
     render();
@@ -1207,10 +1214,9 @@ window.toggleUserActive = async uid => {
   }
 };
 
-window.downloadCredsCSV = (list = LAST_GENERATED_CREDS) => {
-  const data = (list && list.length) ? list : LAST_GENERATED_CREDS;
-  if (!data || !data.length) return alert('Yuklab olish uchun ro‘yxat topilmadi!');
-  const b = new Blob(['\ufeffLogin;Vaqtinchalik Parol;F.I.Sh.;Fan\n' + data.map(c => `${c.login};${c.pw};${c.name};${c.subject || ''}`).join('\n')], { type: 'text/csv;charset=utf-8' });
+window.downloadCredsCSV = list => {
+  const rows = list.map(c => [c.login, c.pw, c.name, c.subject || ''].map(csvCell).join(';'));
+  const b = new Blob(['\ufeffLogin;Vaqtinchalik Parol;F.I.Sh.;Fan\n' + rows.join('\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(b);
   a.download = 'pedagoglar_parollari.csv';
@@ -1219,7 +1225,8 @@ window.downloadCredsCSV = (list = LAST_GENERATED_CREDS) => {
 
 window.exportRankingCSV = () => {
   const ranking = getRanking();
-  const b = new Blob(['\ufeffO‘rin;F.I.Sh.;Fan;Salohiyat (50);Yutuqlar (30);Rag‘bat (50);Jami (130)\n' + ranking.map(r => `${r.rank};${r.name};${r.subject};${r.A};${r.B};${r.C};${r.T}`).join('\n')], { type: 'text/csv;charset=utf-8' });
+  const rows = ranking.map(r => [r.rank, r.name, r.subject, r.A, r.B, r.C, r.T].map(csvCell).join(';'));
+  const b = new Blob(['\ufeffO‘rin;F.I.Sh.;Fan;Salohiyat (50);Yutuqlar (30);Rag‘bat (50);Jami (130)\n' + rows.join('\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(b);
   a.download = 'pedagoglar_reytingi_hisobot.csv';
@@ -1229,10 +1236,12 @@ window.exportRankingCSV = () => {
 // Dasturni ishga tushirish: Supabase bilan sinxronlash
 (async function init() {
   ME = loadSession();
-  try {
-    await syncData();
-  } catch (err) {
-    console.error('Boshlang‘ich yuklash xatosi:', err);
+  if (ME) {
+    try {
+      await syncData();
+    } catch (err) {
+      console.error('Boshlang‘ich yuklash xatosi:', err);
+    }
   }
   render();
 })();

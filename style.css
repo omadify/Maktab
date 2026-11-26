@@ -390,7 +390,7 @@ label {
 
 .portfolio-page {
   background: #fff;
-  color: #000;
+  color: #111c24;
   border-radius: 12px;
   padding: 32px 36px;
   border: 1px solid var(--ln);
@@ -398,13 +398,20 @@ label {
   margin: 0 auto;
 }
 
-.portfolio-page th {
-  background: #f0f4f8;
-  color: #000;
+.portfolio-page th,
+.portfolio-page td {
+  color: #111c24;
+  border-bottom: 1px solid #d0d7de;
 }
 
-.portfolio-page td {
-  color: #000;
+.portfolio-page th {
+  background: #f0f4f8;
+  color: #111c24;
+  position: static;
+}
+
+.portfolio-page tr:hover td {
+  background: transparent;
 }
 
 .portfolio-header {
