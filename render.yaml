@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: maktab-reyting
+    runtime: static
+    buildCommand: echo "Build complete"
+    staticPublishPath: .
