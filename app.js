@@ -682,6 +682,24 @@ function renderRev(el) {
 // Tab: Reyting jadvali
 function renderRank(el) {
   const ranking = getRanking();
+
+  if (ranking.length === 0) {
+    el.innerHTML = `
+      <div class="page-head">
+        <h2>Pedagoglar Umumiy Reyting Jadvali (0 nafar)</h2>
+      </div>
+      <div class="card" style="text-align:center;padding:40px 20px">
+        <div style="font-size:38px;margin-bottom:10px">📋</div>
+        <h3 style="font-size:18px;margin-bottom:8px">Hozircha tizimga pedagoglar (o‘qituvchilar) kiritilmagan</h3>
+        <p class="sub" style="max-width:540px;margin:0 auto 18px;line-height:1.6">
+          Maktab ma’muriyati va mas’ul baholovchilar reytingda qatnashmaydi. O‘qituvchilar ro‘yxati IT mutaxassis yoki direktor tomonidan <b>"Foydalanuvchilar va Excel Import"</b> bo‘limida Excel (.xlsx / .csv) orqali yuklangach, barcha o‘qituvchilar avtomatik tarzda reyting jadvalida paydo bo‘ladi.
+        </p>
+        ${['director', 'it_admin'].includes(ME?.role) ? `<button class="p" onclick="CUR_TAB='users';render()">⚡ O‘qituvchilarni yuklash (Excel / CSV)</button>` : ''}
+      </div>
+    `;
+    return;
+  }
+
   el.innerHTML = `
     <div class="page-head">
       <h2>Pedagoglar Umumiy Reyting Jadvali (${ranking.length} nafar)</h2>
