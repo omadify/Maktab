@@ -106,7 +106,7 @@ create or replace function public.get_workspace_data(p_token text)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -226,7 +226,7 @@ create or replace function public.submit_entry(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -266,7 +266,7 @@ create or replace function public.update_my_profile(p_token text, p_updates json
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -317,7 +317,7 @@ create or replace function public.update_my_preferences(p_token text, p_prefs js
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -340,7 +340,7 @@ create or replace function public.get_my_sessions(p_token text)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -375,7 +375,7 @@ create or replace function public.revoke_my_session(p_token text, p_session_id u
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -412,7 +412,7 @@ create or replace function public.get_my_activity(p_token text, p_limit integer 
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -448,7 +448,7 @@ create or replace function public.get_appeals(p_token text)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -515,7 +515,7 @@ create or replace function public.create_appeal(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -565,7 +565,7 @@ create or replace function public.add_appeal_message(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -624,7 +624,7 @@ create or replace function public.update_appeal_status(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -683,7 +683,7 @@ create or replace function public.get_dev_goals(p_token text)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -724,7 +724,7 @@ create or replace function public.upsert_dev_goal(p_token text, p_goal jsonb)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -783,7 +783,7 @@ create or replace function public.delete_dev_goal(p_token text, p_goal_id bigint
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -802,7 +802,7 @@ create or replace function public.upsert_dev_task(p_token text, p_task jsonb)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -838,7 +838,7 @@ create or replace function public.delete_dev_task(p_token text, p_task_id bigint
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;

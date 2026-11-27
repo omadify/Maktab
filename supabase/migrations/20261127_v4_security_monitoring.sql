@@ -270,6 +270,7 @@ $$;
 create or replace function public._generate_temp_pw()
 returns text
 language plpgsql
+set search_path = public, extensions
 as $$
 declare
   v_chars constant text := '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -297,7 +298,7 @@ create or replace function public._log_activity(
 returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 begin
   insert into public.activity_logs(actor_uid, actor_name, actor_role, action, target_type, target_id, outcome, metadata)
@@ -319,7 +320,7 @@ returns table (
 )
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_hash text;
@@ -355,7 +356,7 @@ create or replace function public.auth_login(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_login text := lower(trim(coalesce(p_login, '')));
@@ -456,7 +457,7 @@ create or replace function public.auth_logout(p_token text)
 returns boolean
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -484,7 +485,7 @@ create or replace function public.auth_change_password(p_token text, p_old_pw te
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -526,7 +527,7 @@ create or replace function public.heartbeat_presence(p_token text)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -560,7 +561,7 @@ create or replace function public.get_workspace_data(p_token text)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -658,7 +659,7 @@ create or replace function public.submit_entry(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -700,7 +701,7 @@ create or replace function public.review_entry_atomic(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -766,7 +767,7 @@ create or replace function public.delete_entry_safe(p_token text, p_entry_id big
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -800,7 +801,7 @@ create or replace function public.admin_create_users(p_token text, p_users jsonb
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -855,7 +856,7 @@ create or replace function public.admin_update_user(p_token text, p_target_uid b
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -918,7 +919,7 @@ create or replace function public.admin_reset_password(p_token text, p_target_ui
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -957,7 +958,7 @@ create or replace function public.get_monitoring_data(p_token text, p_limit inte
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -1006,7 +1007,7 @@ create or replace function public.get_user_notifications(p_token text)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
@@ -1029,7 +1030,7 @@ create or replace function public.mark_notification_read(p_token text, p_id bigi
 returns boolean
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_sess record;
