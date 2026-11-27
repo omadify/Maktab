@@ -1,18 +1,19 @@
-// Achievement Submission, Review Queue (with Modal), and 26-AF Criteria Explorer
-import { IND, IMAP, SEC } from '../config.js';
-import { api } from '../api.js';
+// Achievement Submission (Draft Persistence, Magic Validation, Orphan Cleanup), Split-Panel Review Center & Interactive Criteria
+import { IND, IMAP, SEC, calcAuthoritativePts } from '../config.js';
+import { api, validateProofFile } from '../api.js';
 import { icon } from '../icons.js';
-import { $, $$, esc, toast, openModal, closeModal, confirmDialog, badgeStatus, emptyStateHtml, formatDateUz, avatarHtml } from '../ui.js';
+import { $, $$, esc, toast, badgeStatus, emptyStateHtml, formatDateUz, avatarHtml } from '../ui.js';
 
-let revState = { status: 'pending', search: '', ind: 'all' };
+let revState = { status: 'pending', search: '', ind: 'all', selectedId: null };
 let critState = { sec: 'all', search: '' };
+let draftForm = { ind: '', type: '', qty: 1, date: '', descr: '', file: null, previewUrl: null };
 
 /* ==========================================================================
-   YUTUQ QO'SHISH (Add Achievement)
+   1. YUTUQ QO'SHISH (Achievement Submission)
    ========================================================================== */
 export function renderAddEntry(el, ctx) {
-  const { me } = ctx;
   const today = new Date().toISOString().slice(0, 10);
+  if (!draftForm.date) draftForm.date = today;
 
   el.innerHTML = `
     <div class="stack-v">
@@ -33,7 +34,13 @@ export function renderAddEntry(el, ctx) {
               <label for="ai">Baholash mezoni (Indikator)</label>
               <select id="ai" class="input" required>
                 <option value="">— Mezonni tanlang —</option>
-                ${IND.map(i => `<option value="${i.id}">${i.id}. ${i.sec}-bo‘lim: ${esc(i.name)} (maks: ${i.max} ball)</option>`).join('')}
+                ${['A', 'B', 'C'].map(secKey => `
+                  <optgroup label="${secKey}-bo‘lim: ${esc(SEC[secKey][0])} (maks ${SEC[secKey][1]} ball)">
+                    ${IND.filter(i => i.sec === secKey).map(i => `
+                      <option value="${i.id}" ${String(draftForm.ind) === String(i.id) ? 'selected' : ''}>${i.id}. ${esc(i.name)} (maks: ${i.max} ball)</option>
+                    `).join('')}
+                  </optgroup>
+                `).join('')}
               </select>
             </div>
 
@@ -48,37 +55,42 @@ export function renderAddEntry(el, ctx) {
             <div class="grid-2">
               <div class="field">
                 <label for="aq">Soni (o‘quvchi yoki sinflar soni)</label>
-                <input id="aq" class="input" type="number" min="1" max="50" value="1" required>
+                <input id="aq" class="input" type="number" min="1" max="50" value="${esc(draftForm.qty)}" required>
               </div>
               <div class="field">
                 <label for="adt">Yutuq sanasi</label>
-                <input id="adt" class="input" type="date" value="${today}" required>
+                <input id="adt" class="input" type="date" value="${esc(draftForm.date)}" required>
               </div>
             </div>
 
             <div id="pts-preview-box" style="display:none;padding:12px 14px;border-radius:10px;background:var(--primary-soft);border:1px solid var(--primary-border);align-items:center;justify-content:space-between">
-              <span style="font-size:13px;font-weight:500;color:var(--text-2)">Hisoblanadigan ball</span>
+              <span style="font-size:13px;font-weight:500;color:var(--text-2)">Hisoblanadigan ball (server tekshiradi)</span>
               <span id="pts-preview" style="font-size:16px;font-weight:700;color:var(--primary)"></span>
             </div>
 
             <div class="field">
               <label for="ad">Batafsil tavsif</label>
-              <textarea id="ad" class="input" rows="3" placeholder="Masalan: 10-A sinf o‘quvchisi Anvarov Bobur IELTS 7.5 sertifikatini oldi (sertifikat raqami, sana)…" required></textarea>
+              <textarea id="ad" class="input" rows="3" placeholder="Masalan: 10-A sinf o‘quvchisi Anvarov Bobur IELTS 7.5 sertifikatini oldi (sertifikat raqami, sana)…" required>${esc(draftForm.descr)}</textarea>
             </div>
 
             <div class="field">
-              <label>Tasdiqlovchi hujjat (PDF, JPG, PNG — ixtiyoriy, 15 MB gacha)</label>
+              <label>Tasdiqlovchi hujjat (PDF, JPG, PNG — 15 MB gacha)</label>
               <div class="dropzone" id="af-dropzone" tabindex="0" role="button" aria-label="Hujjat faylini tanlash">
                 <input id="af-file" type="file" accept=".pdf,.jpg,.jpeg,.png" style="display:none">
-                <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+                <div id="af-dz-body" style="display:flex;flex-direction:column;align-items:center;gap:6px">
                   <div class="kpi-icon primary">${icon('upload-cloud', 18)}</div>
-                  <div id="af-file-label" style="font-size:13.5px;font-weight:500;color:var(--text)">Faylni shu yerga tashlang yoki tanlash uchun bosing</div>
-                  <div style="font-size:12px;color:var(--text-muted)">Hujjat xavfsiz bulutli saqlashga yuklanadi</div>
+                  <div style="font-size:13.5px;font-weight:500;color:var(--text)">Faylni shu yerga tashlang yoki tanlash uchun bosing</div>
+                  <div style="font-size:12px;color:var(--text-muted)">Format va hajm serverdan oldin tekshiriladi</div>
                 </div>
               </div>
+              <div id="af-file-preview" style="display:none;margin-top:8px;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg-subtle);align-items:center;justify-content:space-between;gap:10px"></div>
             </div>
 
-            <div style="display:flex;gap:10px;flex-wrap:wrap;padding-top:6px">
+            <div id="af-err" class="form-alert error" style="display:none" role="alert">
+              ${icon('alert-circle', 16)}<span id="af-err-txt"></span>
+            </div>
+
+            <div style="display:flex;gap:10px;flex-wrap:wrap;padding-top:4px">
               <button class="btn btn-primary" type="submit" id="sub-btn">${icon('check-circle', 16)} Tasdiqlashga yuborish</button>
               <button class="btn btn-secondary" type="button" id="cancel-add-btn">Bekor qilish</button>
             </div>
@@ -86,25 +98,11 @@ export function renderAddEntry(el, ctx) {
         </div>
 
         <div class="card" style="height:fit-content">
-          <div class="card-header">
-            <div>
-              <h3 class="card-title">Yuborish qoidalari</h3>
-              <p class="card-subtitle">Ariza tez tasdiqlanishi uchun tavsiyalar</p>
-            </div>
-          </div>
+          <div class="card-header"><div><h3 class="card-title">Yuborish qoidalari</h3><p class="card-subtitle">Xavfsiz va tez tasdiqlash bo‘yicha eslatma</p></div></div>
           <div style="display:flex;flex-direction:column;gap:12px;font-size:13px;color:var(--text-2)">
-            <div style="display:flex;gap:10px;align-items:flex-start">
-              <span style="color:var(--primary)">${icon('check-circle', 16)}</span>
-              <span>Har bir mezon bo‘yicha ballar 26-AF buyruq limitigacha jamlanadi.</span>
-            </div>
-            <div style="display:flex;gap:10px;align-items:flex-start">
-              <span style="color:var(--primary)">${icon('paperclip', 16)}</span>
-              <span>Diplom, sertifikat yoki buyruq nusxasini PDF/rasm ko‘rinishida biriktirish tavsiya etiladi.</span>
-            </div>
-            <div style="display:flex;gap:10px;align-items:flex-start">
-              <span style="color:var(--primary)">${icon('clock', 16)}</span>
-              <span>Mas’ul ekspert tasdiqlagandan so‘ng ball avtomatik ravishda reytingga qo‘shiladi.</span>
-            </div>
+            <div style="display:flex;gap:10px;align-items:flex-start"><span style="color:var(--primary)">${icon('check-circle', 16)}</span><span>Ballar 26-AF buyruq limitlariga muvofiq avtomatik hisoblanadi.</span></div>
+            <div style="display:flex;gap:10px;align-items:flex-start"><span style="color:var(--primary)">${icon('paperclip', 16)}</span><span>Faqat haqiqiy PDF, JPG yoki PNG skanlar qabul qilinadi.</span></div>
+            <div style="display:flex;gap:10px;align-items:flex-start"><span style="color:var(--primary)">${icon('clock', 16)}</span><span>Mas’ul ekspert tasdiqlaganidan so‘ng ball reytingga qo‘shiladi.</span></div>
           </div>
         </div>
       </div>
@@ -112,107 +110,150 @@ export function renderAddEntry(el, ctx) {
   `;
 
   $('#add-crit-link').onclick = () => ctx.navigate('criteria');
-  $('#cancel-add-btn').onclick = () => ctx.navigate('my_results');
+  $('#cancel-add-btn').onclick = () => {
+    draftForm = { ind: '', type: '', qty: 1, date: today, descr: '', file: null, previewUrl: null };
+    ctx.setDirtyForm(false);
+    ctx.navigate('my_results');
+  };
 
   const dz = $('#af-dropzone');
   const fileInp = $('#af-file');
-  const fileLabel = $('#af-file-label');
+  const previewBox = $('#af-file-preview');
 
-  const showSelectedFile = f => {
+  function renderFilePreview() {
+    const f = draftForm.file;
     if (!f) {
-      fileLabel.textContent = 'Faylni shu yerga tashlang yoki tanlash uchun bosing';
+      previewBox.style.display = 'none';
+      dz.style.display = 'block';
       return;
     }
-    const sizeKb = Math.round(f.size / 1024);
-    fileLabel.innerHTML = `Tanlangan fayl: <b>${esc(f.name)}</b> (${sizeKb >= 1024 ? (sizeKb / 1024).toFixed(1) + ' MB' : sizeKb + ' KB'})`;
-  };
+    dz.style.display = 'none';
+    previewBox.style.display = 'flex';
+    const sizeLabel = f.size >= 1024 * 1024 ? `${(f.size / (1024 * 1024)).toFixed(2)} MB` : `${Math.round(f.size / 1024)} KB`;
+    previewBox.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;min-width:0">
+        ${draftForm.previewUrl
+          ? `<img src="${draftForm.previewUrl}" alt="Yuklangan rasm" style="width:42px;height:42px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">`
+          : `<div class="kpi-icon primary">${icon('file-text', 17)}</div>`}
+        <div style="min-width:0">
+          <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(f.name)}</div>
+          <div style="font-size:11.5px;color:var(--text-muted)">${sizeLabel}</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button type="button" class="btn btn-secondary btn-sm" id="af-replace">Almashtirish</button>
+        <button type="button" class="btn btn-danger btn-sm" id="af-remove">${icon('trash-2', 14)}</button>
+      </div>
+    `;
+    $('#af-replace').onclick = () => fileInp.click();
+    $('#af-remove').onclick = () => {
+      if (draftForm.previewUrl) URL.revokeObjectURL(draftForm.previewUrl);
+      draftForm.file = null;
+      draftForm.previewUrl = null;
+      fileInp.value = '';
+      renderFilePreview();
+    };
+  }
+
+  async function handleFileSelect(f) {
+    if (!f) return;
+    try {
+      await validateProofFile(f);
+      if (draftForm.previewUrl) URL.revokeObjectURL(draftForm.previewUrl);
+      draftForm.file = f;
+      draftForm.previewUrl = f.type.startsWith('image/') ? URL.createObjectURL(f) : null;
+      renderFilePreview();
+      ctx.setDirtyForm(true);
+    } catch (err) {
+      toast(err.message, 'error');
+      fileInp.value = '';
+    }
+  }
 
   dz.onclick = () => fileInp.click();
   dz.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInp.click(); } };
   dz.ondragover = e => { e.preventDefault(); dz.classList.add('dragover'); };
   dz.ondragleave = () => dz.classList.remove('dragover');
-  dz.ondrop = e => {
-    e.preventDefault();
-    dz.classList.remove('dragover');
-    if (e.dataTransfer.files?.length) {
-      fileInp.files = e.dataTransfer.files;
-      showSelectedFile(fileInp.files[0]);
-    }
-  };
-  fileInp.onchange = () => showSelectedFile(fileInp.files[0]);
+  dz.ondrop = e => { e.preventDefault(); dz.classList.remove('dragover'); if (e.dataTransfer.files?.length) handleFileSelect(e.dataTransfer.files[0]); };
+  fileInp.onchange = () => handleFileSelect(fileInp.files[0]);
 
-  function updatePtsPreview() {
+  function syncTypeAndPreview() {
     const id = Number($('#ai').value);
     const ind = IMAP[id];
-    const selType = $('#at').selectedOptions[0];
-    const box = $('#pts-preview-box');
-    if (!ind || !selType) {
-      box.style.display = 'none';
-      return;
-    }
-    const qty = Math.max(1, Number($('#aq').value) || 1);
-    const raw = Number(selType.dataset.pts) * qty;
-    const capped = Math.min(raw, ind.max);
-    box.style.display = 'flex';
-    $('#pts-preview').textContent = raw > ind.max
-      ? `+${capped} ball (limit: ${ind.max})`
-      : `+${capped} ball`;
-  }
-
-  $('#ai').onchange = () => {
-    const id = Number($('#ai').value);
-    const ind = IMAP[id];
+    draftForm.ind = $('#ai').value;
     if (!ind) {
       $('#at-wrap').style.display = 'none';
       $('#pts-preview-box').style.display = 'none';
       return;
     }
     $('#at-wrap').style.display = 'flex';
-    $('#at').innerHTML = ind.types.map(t => `<option value="${esc(t[0])}" data-pts="${t[1]}">${esc(t[0])} — +${t[1]} ball</option>`).join('');
-    $('#adoc').innerHTML = `
-      ${icon('file-text', 16)}
-      <div>
-        <div><b>Kerakli hujjat:</b> ${esc(ind.doc)}</div>
-        <div style="margin-top:2px"><b>Mas’ul baholovchi:</b> ${esc(ind.respStr)}</div>
-      </div>
-    `;
-    updatePtsPreview();
-  };
+    $('#at').innerHTML = ind.types.map(t => `<option value="${esc(t[0])}" data-pts="${t[1]}" ${draftForm.type === t[0] ? 'selected' : ''}>${esc(t[0])} — +${t[1]} ball</option>`).join('');
+    draftForm.type = $('#at').value;
+    $('#adoc').innerHTML = `${icon('file-text', 16)}<div><div><b>Kerakli hujjat:</b> ${esc(ind.doc)}</div><div style="margin-top:2px"><b>Mas’ul baholovchi:</b> ${esc(ind.respStr)}</div></div>`;
+    updatePts();
+  }
 
-  $('#at').onchange = updatePtsPreview;
-  $('#aq').oninput = updatePtsPreview;
+  function updatePts() {
+    const id = Number($('#ai').value);
+    const ind = IMAP[id];
+    const sel = $('#at').selectedOptions[0];
+    const box = $('#pts-preview-box');
+    if (!ind || !sel) { box.style.display = 'none'; return; }
+    const qty = Math.max(1, Math.min(50, Number($('#aq').value) || 1));
+    draftForm.qty = qty;
+    draftForm.type = sel.value;
+    const raw = Number(sel.dataset.pts) * qty;
+    const capped = calcAuthoritativePts(id, sel.value, qty) ?? Math.min(raw, ind.max);
+    box.style.display = 'flex';
+    $('#pts-preview').textContent = raw > ind.max ? `+${capped} ball (limit: ${ind.max})` : `+${capped} ball`;
+  }
 
+  $('#ai').onchange = () => { ctx.setDirtyForm(true); syncTypeAndPreview(); };
+  $('#at').onchange = () => { ctx.setDirtyForm(true); updatePts(); };
+  $('#aq').oninput = () => { ctx.setDirtyForm(true); updatePts(); };
+  $('#adt').onchange = e => { draftForm.date = e.target.value; ctx.setDirtyForm(true); };
+  $('#ad').oninput = e => { draftForm.descr = e.target.value; ctx.setDirtyForm(Boolean(e.target.value.trim())); };
+
+  if (draftForm.ind) syncTypeAndPreview();
+  renderFilePreview();
+
+  let submitting = false;
   $('#af').onsubmit = async e => {
     e.preventDefault();
+    if (submitting) return;
+    const errBox = $('#af-err');
+    errBox.style.display = 'none';
+    const showErr = m => { $('#af-err-txt').textContent = m; errBox.style.display = 'flex'; };
+
     const indId = Number($('#ai').value);
     const ind = IMAP[indId];
-    if (!ind) return toast('Iltimos, baholash mezonini tanlang.', 'warning');
-
+    if (!ind) return showErr('Iltimos, baholash mezonini tanlang.');
     const selType = $('#at').selectedOptions[0];
-    const qty = Math.max(1, Number($('#aq').value) || 1);
-    const pts = Math.min(Number(selType.dataset.pts) * qty, ind.max);
+    const qty = Math.max(1, Math.min(50, Number($('#aq').value) || 1));
+    const pts = calcAuthoritativePts(indId, selType.value, qty);
+    if (pts === null) return showErr('Mezon yoki miqdor noto‘g‘ri.');
     const descr = $('#ad').value.trim();
-    if (!descr) return toast('Iltimos, yutuq tavsifini kiriting.', 'warning');
+    if (descr.length < 3) return showErr('Batafsil tavsifni kiriting (kamida 3 belgi).');
 
-    const f = fileInp.files[0];
+    submitting = true;
     const btn = $('#sub-btn');
     btn.disabled = true;
-    btn.innerHTML = `${icon('refresh-cw', 15)} Yuborilmoqda…`;
+    let uploadedObject = null;
 
     try {
       let fname = null;
       let fpath = null;
-      if (f) {
-        if (f.size > 15 * 1024 * 1024) throw new Error('Fayl hajmi 15 MB dan oshmasligi kerak.');
+      if (draftForm.file) {
         btn.innerHTML = `${icon('upload-cloud', 15)} Hujjat yuklanmoqda…`;
-        const up = await api.uploadProofFile(f);
+        const up = await api.uploadProofFile(draftForm.file);
         fname = up.fname;
         fpath = up.fpath;
+        uploadedObject = up.objectName;
       }
 
       btn.innerHTML = `${icon('refresh-cw', 15)} Saqlanmoqda…`;
-      await api.insertEntry({
-        uid: me.id,
+      await api.submitEntry({
+        uid: ctx.me.id,
         ind: indId,
         type: selType.value,
         qty,
@@ -225,19 +266,27 @@ export function renderAddEntry(el, ctx) {
         note: ''
       });
 
-      toast('Yutuq muvaffaqiyatli yuborildi va tekshiruvga qo‘yildi.', 'success');
+      if (draftForm.previewUrl) URL.revokeObjectURL(draftForm.previewUrl);
+      draftForm = { ind: '', type: '', qty: 1, date: today, descr: '', file: null, previewUrl: null };
+      ctx.setDirtyForm(false);
+      toast('Yutuq muvaffaqiyatli yuborildi va tasdiqlash navbatiga qo‘yildi.', 'success');
       await ctx.refresh();
       ctx.navigate('my_results');
     } catch (err) {
-      toast('Xatolik: ' + err.message, 'error');
+      // Orphan file cleanup if upload succeeded but DB insert failed
+      if (uploadedObject) {
+        await api.deleteProofObject(uploadedObject);
+      }
+      showErr(err.message || 'Saqlashda xatolik yuz berdi. Qayta urinib ko‘ring.');
       btn.disabled = false;
       btn.innerHTML = `${icon('check-circle', 16)} Tasdiqlashga yuborish`;
+      submitting = false;
     }
   };
 }
 
 /* ==========================================================================
-   BAHOLASH VA TASDIQLASH NAVBATI (Director & Reviewer)
+   2. SPLIT-PANEL REVIEW CENTER (Director & Reviewer)
    ========================================================================== */
 export function renderReviews(el, ctx) {
   const { me, users, entries } = ctx;
@@ -256,258 +305,213 @@ export function renderReviews(el, ctx) {
     all: scopedEntries.length
   };
 
-  const q = revState.search.trim().toLowerCase();
-  const filtered = scopedEntries.filter(e => {
-    if (revState.status !== 'all' && e.status !== revState.status) return false;
-    if (revState.ind !== 'all' && String(e.ind) !== revState.ind) return false;
-    if (q) {
-      const u = users.find(x => x.id === e.uid);
-      const ind = IMAP[e.ind];
-      const hay = `${u?.name || ''} ${u?.subject || ''} ${ind?.name || ''} ${e.type || ''} ${e.descr || ''}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
-
   el.innerHTML = `
     <div class="stack-v">
       <div class="page-header">
         <div>
-          <h1 class="page-title">Baholash va tasdiqlash</h1>
+          <h1 class="page-title">Tasdiqlash markazi</h1>
           <p class="page-desc">
             ${isDirector
-              ? 'Maktab direktori sifatida barcha 15 ta indikator bo‘yicha arizalarni tasdiqlash huquqi.'
-              : `Mas’ul ekspert (${esc(me.name)}) ga biriktirilgan mezonlar bo‘yicha arizalar.`}
+              ? 'Maktab direktori sifatida barcha 15 ta indikator bo‘yicha arizalarni ko‘rib chiqish.'
+              : `Mas’ul ekspert (${esc(me.name)}) ga biriktirilgan mezonlar navbati.`}
           </p>
         </div>
       </div>
 
-      <div class="card">
-        <div class="filter-bar">
+      <div class="card card-compact">
+        <div class="filter-bar" style="margin-bottom:0">
           <div class="tabs-pill" role="tablist">
-            <button type="button" class="tab-btn ${revState.status === 'pending' ? 'active' : ''}" data-rev-st="pending">
-              Kutilmoqda <span class="tab-count">${counts.pending}</span>
-            </button>
-            <button type="button" class="tab-btn ${revState.status === 'approved' ? 'active' : ''}" data-rev-st="approved">
-              Tasdiqlangan <span class="tab-count">${counts.approved}</span>
-            </button>
-            <button type="button" class="tab-btn ${revState.status === 'rejected' ? 'active' : ''}" data-rev-st="rejected">
-              Rad etilgan <span class="tab-count">${counts.rejected}</span>
-            </button>
-            <button type="button" class="tab-btn ${revState.status === 'all' ? 'active' : ''}" data-rev-st="all">
-              Barchasi <span class="tab-count">${counts.all}</span>
-            </button>
+            <button type="button" class="tab-btn ${revState.status === 'pending' ? 'active' : ''}" data-rev-st="pending">Kutilmoqda <span class="tab-count">${counts.pending}</span></button>
+            <button type="button" class="tab-btn ${revState.status === 'approved' ? 'active' : ''}" data-rev-st="approved">Tasdiqlangan <span class="tab-count">${counts.approved}</span></button>
+            <button type="button" class="tab-btn ${revState.status === 'rejected' ? 'active' : ''}" data-rev-st="rejected">Rad etilgan <span class="tab-count">${counts.rejected}</span></button>
+            <button type="button" class="tab-btn ${revState.status === 'all' ? 'active' : ''}" data-rev-st="all">Barchasi <span class="tab-count">${counts.all}</span></button>
           </div>
-
           <div class="filter-controls" style="justify-content:flex-end">
-            <div class="input-icon-wrap" style="min-width:200px;max-width:260px">
+            <div class="input-icon-wrap" style="min-width:190px;max-width:250px">
               <span class="input-leading">${icon('search', 15)}</span>
               <input id="rev-search" class="input has-leading" type="search" value="${esc(revState.search)}" placeholder="Pedagog yoki tavsif…">
             </div>
-            <select id="rev-ind" class="input" style="width:auto;max-width:240px">
+            <select id="rev-ind" class="input" style="width:auto;max-width:230px">
               <option value="all">Barcha mezonlar</option>
-              ${IND.filter(i => isDirector || i.resp.includes(me.name)).map(i => `
-                <option value="${i.id}" ${revState.ind === String(i.id) ? 'selected' : ''}>${i.id}. ${esc(i.name)}</option>
-              `).join('')}
+              ${IND.filter(i => isDirector || i.resp.includes(me.name)).map(i => `<option value="${i.id}" ${revState.ind === String(i.id) ? 'selected' : ''}>${i.id}. ${esc(i.name)}</option>`).join('')}
             </select>
           </div>
         </div>
-
-        ${filtered.length === 0
-          ? emptyStateHtml({
-              iconName: 'check-circle',
-              title: revState.status === 'pending' ? 'Kutayotgan arizalar yo‘q' : 'Arizalar topilmadi',
-              desc: revState.status === 'pending'
-                ? 'Hozirda tekshirish uchun yangi arizalar mavjud emas.'
-                : 'Tanlangan filtrlar bo‘yicha natija topilmadi.'
-            })
-          : `
-            <div class="table-wrap desktop-table-only">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Sana</th>
-                    <th>Pedagog</th>
-                    <th>Mezon</th>
-                    <th>Yutuq va tavsif</th>
-                    <th>Ball</th>
-                    <th>Hujjat</th>
-                    <th>Holat</th>
-                    <th style="text-align:right">Amallar</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${filtered.map(e => {
-                    const u = users.find(x => x.id === e.uid);
-                    const ind = IMAP[e.ind];
-                    const isOwn = e.uid === me.id;
-                    return `
-                      <tr>
-                        <td style="white-space:nowrap">${formatDateUz(e.date)}</td>
-                        <td>
-                          <div style="display:flex;align-items:center;gap:8px">
-                            ${avatarHtml(u?.name || '?', 'sm')}
-                            <div>
-                              <div style="font-weight:600">${esc(u ? u.name : 'Noma’lum')}</div>
-                              <div style="font-size:12px;color:var(--text-muted)">${esc(u?.subject || '')}</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td>
-                          <div style="font-weight:600">${e.ind}. ${esc(ind?.name || '')}</div>
-                          <div style="font-size:11.5px;color:var(--text-muted)">Mas’ul: ${esc(ind?.respStr || '')}</div>
-                        </td>
-                        <td>
-                          <div style="font-weight:500">${esc(e.type)} × ${e.qty}</div>
-                          <div style="font-size:12px;color:var(--text-muted)">${esc(e.descr)}</div>
-                          ${e.note ? `<div style="font-size:11.5px;color:var(--error);margin-top:2px">Izoh: ${esc(e.note)}</div>` : ''}
-                        </td>
-                        <td><b style="color:var(--primary)">+${e.pts}</b></td>
-                        <td>${e.fpath ? `<a href="${esc(e.fpath)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${icon('external-link', 13)} Ko‘rish</a>` : '—'}</td>
-                        <td>${badgeStatus(e.status)}</td>
-                        <td style="text-align:right">
-                          ${isOwn && !isDirector
-                            ? '<span style="font-size:11.5px;color:var(--warning)">O‘zingizniki</span>'
-                            : `
-                              <div style="display:inline-flex;gap:6px">
-                                ${e.status !== 'approved' ? `<button type="button" class="btn btn-success btn-sm" data-rev-act="approved" data-rev-id="${e.id}">${icon('check', 14)} Tasdiqlash</button>` : ''}
-                                ${e.status !== 'rejected' ? `<button type="button" class="btn btn-danger btn-sm" data-rev-act="rejected" data-rev-id="${e.id}">${icon('x', 14)} Rad etish</button>` : ''}
-                              </div>
-                            `}
-                        </td>
-                      </tr>
-                    `;
-                  }).join('')}
-                </tbody>
-              </table>
-            </div>
-
-            <div class="mobile-card-list">
-              ${filtered.map(e => {
-                const u = users.find(x => x.id === e.uid);
-                const ind = IMAP[e.ind];
-                const isOwn = e.uid === me.id;
-                return `
-                  <div class="card card-compact" style="box-shadow:none">
-                    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
-                      <span style="font-size:12px;color:var(--text-muted)">${formatDateUz(e.date)}</span>
-                      ${badgeStatus(e.status)}
-                    </div>
-                    <div style="font-weight:600;font-size:14px">${esc(u ? u.name : 'Noma’lum')}</div>
-                    <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">${e.ind}. ${esc(ind?.name || '')}</div>
-                    <div style="font-size:13px">${esc(e.type)} × ${e.qty} · <b style="color:var(--primary)">+${e.pts} ball</b></div>
-                    <div style="font-size:12.5px;color:var(--text-muted);margin-top:4px">${esc(e.descr)}</div>
-                    ${e.fpath ? `<div style="margin-top:8px"><a href="${esc(e.fpath)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${icon('external-link', 13)} Tasdiqlovchi hujjat</a></div>` : ''}
-                    ${!(isOwn && !isDirector) ? `
-                      <div style="display:flex;gap:8px;margin-top:12px">
-                        ${e.status !== 'approved' ? `<button type="button" class="btn btn-success" style="flex:1" data-rev-act="approved" data-rev-id="${e.id}">Tasdiqlash</button>` : ''}
-                        ${e.status !== 'rejected' ? `<button type="button" class="btn btn-danger" style="flex:1" data-rev-act="rejected" data-rev-id="${e.id}">Rad etish</button>` : ''}
-                      </div>
-                    ` : ''}
-                  </div>
-                `;
-              }).join('')}
-            </div>
-          `}
       </div>
+
+      <div id="rev-split-zone"></div>
     </div>
   `;
 
-  $$('[data-rev-st]').forEach(btn => {
-    btn.onclick = () => { revState.status = btn.dataset.revSt; renderReviews(el, ctx); };
-  });
+  function renderSplit() {
+    const q = revState.search.trim().toLowerCase();
+    const filtered = scopedEntries.filter(e => {
+      if (revState.status !== 'all' && e.status !== revState.status) return false;
+      if (revState.ind !== 'all' && String(e.ind) !== revState.ind) return false;
+      if (q) {
+        const u = users.find(x => x.id === e.uid);
+        const ind = IMAP[e.ind];
+        const hay = `${u?.name || ''} ${u?.subject || ''} ${ind?.name || ''} ${e.type || ''} ${e.descr || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
 
-  const sInp = $('#rev-search');
-  sInp.oninput = () => {
-    const pos = sInp.selectionStart;
-    revState.search = sInp.value;
-    renderReviews(el, ctx);
-    const ni = $('#rev-search');
-    if (ni) { ni.focus(); ni.setSelectionRange(pos, pos); }
-  };
+    const zone = $('#rev-split-zone');
+    if (filtered.length === 0) {
+      zone.innerHTML = `<div class="card">${emptyStateHtml({
+        iconName: 'check-circle',
+        title: revState.status === 'pending' ? 'Tasdiqlash kutayotgan arizalar yo‘q' : 'Arizalar topilmadi',
+        desc: 'Tanlangan filtrlar bo‘yicha hech qanday ariza aniqlanmadi.'
+      })}</div>`;
+      return;
+    }
 
-  $('#rev-ind').onchange = e => { revState.ind = e.target.value; renderReviews(el, ctx); };
+    if (!filtered.some(e => e.id === revState.selectedId)) {
+      revState.selectedId = filtered[0].id;
+    }
+    const sel = filtered.find(e => e.id === revState.selectedId) || filtered[0];
+    const owner = users.find(u => u.id === sel.uid);
+    const ind = IMAP[sel.ind];
+    const isOwn = sel.uid === me.id;
+    const isImg = sel.fpath && /\.(png|jpe?g)(\?|$)/i.test(sel.fpath);
 
-  $$('[data-rev-act]').forEach(btn => {
-    btn.onclick = () => {
-      const id = Number(btn.dataset.revId);
-      const status = btn.dataset.revAct;
-      const entry = entries.find(x => x.id === id);
-      if (!entry) return;
-      const owner = users.find(u => u.id === entry.uid);
-      const ind = IMAP[entry.ind];
-      const isApprove = status === 'approved';
+    zone.innerHTML = `
+      <div class="review-split">
+        <div class="review-queue-list" role="listbox" aria-label="Arizalar navbati">
+          ${filtered.map(e => {
+            const u = users.find(x => x.id === e.uid);
+            return `
+              <button type="button" class="review-queue-item ${e.id === sel.id ? 'active' : ''}" data-q-id="${e.id}">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">
+                  <span style="font-size:13px;font-weight:600;color:var(--text)">${esc(u?.name || 'Pedagog')}</span>
+                  <span class="badge badge-primary">+${e.pts} ball</span>
+                </div>
+                <div style="font-size:12px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.ind}. ${esc(IMAP[e.ind]?.name || '')}</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+                  <span style="font-size:11.5px;color:var(--text-muted)">${formatDateUz(e.date)}</span>
+                  ${badgeStatus(e.status)}
+                </div>
+              </button>
+            `;
+          }).join('')}
+        </div>
 
-      openModal({
-        title: isApprove ? 'Yutuqni tasdiqlash' : 'Arizani rad etish',
-        bodyHtml: `
-          <div class="stack-v" style="gap:14px">
-            <div style="padding:12px 14px;border-radius:10px;background:var(--bg-subtle);border:1px solid var(--border)">
-              <div style="font-weight:600">${esc(owner?.name || 'Pedagog')} · <span style="color:var(--primary)">+${entry.pts} ball</span></div>
-              <div style="font-size:12.5px;color:var(--text-muted);margin-top:3px">${entry.ind}. ${esc(ind?.name || '')} — ${esc(entry.type)} × ${entry.qty}</div>
-              <div style="font-size:13px;margin-top:6px">${esc(entry.descr)}</div>
+        <div class="card" id="rev-detail-pane">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid var(--border)">
+            <div style="display:flex;align-items:center;gap:12px">
+              ${avatarHtml(owner?.name || '?', 'lg')}
+              <div>
+                <div style="font-size:16px;font-weight:700">${esc(owner?.name || 'Noma’lum')}</div>
+                <div style="font-size:12.5px;color:var(--text-muted)">${esc(owner?.subject || 'Pedagog')} · ${formatDateUz(sel.date)}</div>
+              </div>
             </div>
-            <div class="field">
-              <label for="rev-note">${isApprove ? 'Izoh (ixtiyoriy)' : 'Rad etish sababi (majburiy)'}</label>
-              <textarea id="rev-note" class="input" rows="3" placeholder="${isApprove ? 'Masalan: Hujjatlar to‘liq tekshirildi…' : 'Masalan: Sertifikat sanasi yoki muhri ko‘rinmayapti…'}">${esc(entry.note || '')}</textarea>
+            <div style="text-align:right">
+              ${badgeStatus(sel.status)}
+              <div style="font-size:20px;font-weight:700;color:var(--primary);margin-top:4px">+${sel.pts} ball</div>
             </div>
           </div>
-        `,
-        footerHtml: `
-          <button type="button" class="btn btn-secondary" id="rev-m-cancel">Bekor qilish</button>
-          <button type="button" class="btn ${isApprove ? 'btn-success' : 'btn-danger'}" id="rev-m-ok">
-            ${isApprove ? 'Tasdiqlash' : 'Rad etish'}
-          </button>
-        `,
-        onMount: panel => {
-          panel.querySelector('#rev-m-cancel').onclick = closeModal;
-          panel.querySelector('#rev-m-ok').onclick = async () => {
-            const note = panel.querySelector('#rev-note').value.trim();
-            if (!isApprove && !note) {
-              return toast('Iltimos, rad etish sababini kiriting.', 'warning');
-            }
-            const okBtn = panel.querySelector('#rev-m-ok');
-            okBtn.disabled = true;
-            okBtn.textContent = 'Saqlanmoqda…';
-            try {
-              await api.updateEntry(id, { status, note, rev: me.id });
-              closeModal();
-              toast(isApprove ? 'Ariza tasdiqlandi.' : 'Ariza rad etildi.', isApprove ? 'success' : 'info');
-              await ctx.refresh();
-            } catch (err) {
-              toast('Xatolik: ' + err.message, 'error');
-              okBtn.disabled = false;
-              okBtn.textContent = isApprove ? 'Tasdiqlash' : 'Rad etish';
-            }
-          };
-        }
-      });
+
+          <div class="stack-v" style="gap:14px;margin-top:16px">
+            <div style="padding:12px 14px;border-radius:10px;background:var(--bg-subtle);border:1px solid var(--border)">
+              <div style="font-size:12px;color:var(--text-muted)">Mezon va yutuq turi</div>
+              <div style="font-weight:600;margin-top:2px">${sel.ind}. ${esc(ind?.name || '')} (maks: ${ind?.max || 0} ball)</div>
+              <div style="font-size:13px;color:var(--primary);margin-top:3px">${esc(sel.type)} × ${sel.qty} ta</div>
+              <div style="font-size:11.5px;color:var(--text-muted);margin-top:4px">Mas’ul: ${esc(ind?.respStr || '')}</div>
+            </div>
+
+            <div>
+              <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:4px">Pedagog tavsifi</div>
+              <div style="font-size:13.5px;line-height:1.55;color:var(--text)">${esc(sel.descr)}</div>
+            </div>
+
+            <div>
+              <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Tasdiqlovchi hujjat</div>
+              ${sel.fpath ? `
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  ${isImg ? `<img src="${esc(sel.fpath)}" alt="Tasdiqlovchi hujjat" style="max-height:240px;width:100%;object-fit:contain;border-radius:10px;border:1px solid var(--border);background:var(--bg-subtle)">` : ''}
+                  <div>
+                    <a href="${esc(sel.fpath)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${icon('external-link', 14)} Hujjatni alohida oynada ochish (${esc(sel.fname || 'Fayl')})</a>
+                  </div>
+                </div>
+              ` : '<span style="font-size:13px;color:var(--text-muted)">Hujjat biriktirilmagan</span>'}
+            </div>
+
+            ${isOwn && !isDirector ? `
+              <div class="form-alert warning">
+                ${icon('shield', 16)}
+                <span>O‘z yutug‘ingizni tasdiqlay olmaysiz. Uni boshqa mas’ul ekspert yoki direktor ko‘rib chiqadi.</span>
+              </div>
+            ` : `
+              <div class="field" style="padding-top:8px;border-top:1px solid var(--border)">
+                <label for="rev-inline-note">Ekspert izohi (rad etilganda sabab majburiy)</label>
+                <textarea id="rev-inline-note" class="input" rows="2" placeholder="Izoh yoki rad etish sababini yozing…">${esc(sel.note || '')}</textarea>
+              </div>
+              <div style="display:flex;gap:10px;flex-wrap:wrap">
+                ${sel.status !== 'approved' ? `<button type="button" class="btn btn-success" id="rev-do-approve" style="flex:1">${icon('check', 15)} Tasdiqlash</button>` : ''}
+                ${sel.status !== 'rejected' ? `<button type="button" class="btn btn-danger" id="rev-do-reject" style="flex:1">${icon('x', 15)} Rad etish</button>` : ''}
+              </div>
+            `}
+          </div>
+        </div>
+      </div>
+    `;
+
+    $$('[data-q-id]', zone).forEach(btn => {
+      btn.onclick = () => { revState.selectedId = Number(btn.dataset.qId); renderSplit(); };
+    });
+
+    const handleDecision = async status => {
+      const note = ($('#rev-inline-note')?.value || '').trim();
+      if (status === 'rejected' && !note) {
+        return toast('Rad etish uchun sabab kiritilishi shart.', 'warning');
+      }
+      const b1 = $('#rev-do-approve');
+      const b2 = $('#rev-do-reject');
+      if (b1) b1.disabled = true;
+      if (b2) b2.disabled = true;
+      try {
+        await api.reviewEntry(sel.id, status, note, me.id);
+        toast(status === 'approved' ? 'Yutuq muvaffaqiyatli tasdiqlandi.' : 'Ariza rad etildi.', status === 'approved' ? 'success' : 'info');
+        await ctx.refresh();
+      } catch (err) {
+        toast('Xatolik: ' + err.message, 'error');
+        if (b1) b1.disabled = false;
+        if (b2) b2.disabled = false;
+      }
+    };
+
+    const appBtn = $('#rev-do-approve');
+    if (appBtn) appBtn.onclick = () => handleDecision('approved');
+    const rejBtn = $('#rev-do-reject');
+    if (rejBtn) rejBtn.onclick = () => handleDecision('rejected');
+  }
+
+  $$('[data-rev-st]').forEach(btn => {
+    btn.onclick = () => {
+      revState.status = btn.dataset.revSt;
+      $$('[data-rev-st]').forEach(b => b.classList.toggle('active', b.dataset.revSt === revState.status));
+      renderSplit();
     };
   });
+  $('#rev-search').oninput = e => { revState.search = e.target.value; renderSplit(); };
+  $('#rev-ind').onchange = e => { revState.ind = e.target.value; renderSplit(); };
+
+  renderSplit();
 }
 
 /* ==========================================================================
-   BAHOLASH MEZONLARI (26-AF Decree 15 Indicators Explorer)
+   3. CRITERIA EXPLORER (26-AF Decree 15 Indicators)
    ========================================================================== */
 export function renderCriteria(el, ctx) {
   const highlightId = ctx.params?.highlightInd || null;
-  const q = critState.search.trim().toLowerCase();
-
-  const filtered = IND.filter(i => {
-    if (critState.sec !== 'all' && i.sec !== critState.sec) return false;
-    if (q) {
-      const hay = `${i.id} ${i.name} ${i.doc} ${i.respStr} ${i.types.map(t => t[0]).join(' ')}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
 
   el.innerHTML = `
     <div class="stack-v">
       <div class="page-header">
         <div>
           <h1 class="page-title">Baholash mezonlari (26-AF buyruq)</h1>
-          <p class="page-desc">3 ta bo‘lim, 15 ta indikator va jami 130 ballik baholash tizimi.</p>
+          <p class="page-desc">3 ta bo‘lim, 15 ta indikator va jami 130 ballik rasmiy baholash tizimi.</p>
         </div>
         ${['teacher', 'reviewer'].includes(ctx.me.role)
           ? `<div class="page-actions"><button type="button" class="btn btn-primary" id="crit-add-btn">${icon('plus', 15)} Yutuq kiritish</button></div>`
@@ -515,21 +519,9 @@ export function renderCriteria(el, ctx) {
       </div>
 
       <div class="grid-3">
-        <div class="card card-compact">
-          <span class="badge badge-primary">A bo‘lim · 50 ball</span>
-          <div style="font-size:15px;font-weight:600;margin-top:8px">${SEC.A[0]}</div>
-          <div style="font-size:12.5px;color:var(--text-muted);margin-top:3px">1–7 indikatorlar · Ilmiy daraja, toifa, sertifikatlar, metodik ishlar</div>
-        </div>
-        <div class="card card-compact">
-          <span class="badge badge-success">B bo‘lim · 30 ball</span>
-          <div style="font-size:15px;font-weight:600;margin-top:8px">${SEC.B[0]}</div>
-          <div style="font-size:12.5px;color:var(--text-muted);margin-top:3px">14–17 indikatorlar · Olimpiada, sertifikat, STEAM va sport yutuqlari</div>
-        </div>
-        <div class="card card-compact">
-          <span class="badge badge-warning">C bo‘lim · 50 ball</span>
-          <div style="font-size:15px;font-weight:600;margin-top:8px">${SEC.C[0]}</div>
-          <div style="font-size:12.5px;color:var(--text-muted);margin-top:3px">18–21 indikatorlar · CHSB o‘zlashtirish, tadbirlar va fan faolligi</div>
-        </div>
+        <div class="card card-compact"><span class="badge badge-primary">A bo‘lim · 50 ball</span><div style="font-size:15px;font-weight:600;margin-top:8px">${SEC.A[0]}</div><div style="font-size:12px;color:var(--text-muted);margin-top:3px">1–7 indikatorlar · Salohiyat va metodika</div></div>
+        <div class="card card-compact"><span class="badge badge-success">B bo‘lim · 30 ball</span><div style="font-size:15px;font-weight:600;margin-top:8px">${SEC.B[0]}</div><div style="font-size:12px;color:var(--text-muted);margin-top:3px">14–17 indikatorlar · Olimpiada va loyihalar</div></div>
+        <div class="card card-compact"><span class="badge badge-warning">C bo‘lim · 50 ball</span><div style="font-size:15px;font-weight:600;margin-top:8px">${SEC.C[0]}</div><div style="font-size:12px;color:var(--text-muted);margin-top:3px">18–21 indikatorlar · O‘zlashtirish va faollik</div></div>
       </div>
 
       <div class="card">
@@ -545,55 +537,67 @@ export function renderCriteria(el, ctx) {
             <input id="crit-search" class="input has-leading" type="search" value="${esc(critState.search)}" placeholder="Mezon, hujjat yoki mas’ul…">
           </div>
         </div>
-
-        ${filtered.length === 0
-          ? emptyStateHtml({ iconName: 'book-open', title: 'Mezon topilmadi', desc: 'Qidiruv so‘zini o‘zgartirib ko‘ring.' })
-          : `
-            <div class="grid-2">
-              ${filtered.map(i => `
-                <div class="card card-compact" style="box-shadow:none;${highlightId === i.id ? 'border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-glow)' : ''}">
-                  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px">
-                    <div>
-                      <span class="badge ${i.sec === 'A' ? 'badge-primary' : (i.sec === 'B' ? 'badge-success' : 'badge-warning')}">${i.sec}-${i.id}</span>
-                      <h4 style="font-size:15px;font-weight:600;margin-top:6px">${esc(i.name)}</h4>
-                    </div>
-                    <span class="badge badge-neutral" style="font-weight:700">Maks: ${i.max} ball</span>
-                  </div>
-
-                  <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
-                    ${i.types.map(t => `
-                      <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 10px;border-radius:8px;background:var(--bg-subtle)">
-                        <span>${esc(t[0])}</span>
-                        <b style="color:var(--primary)">+${t[1]} ball</b>
-                      </div>
-                    `).join('')}
-                  </div>
-
-                  <div style="font-size:12px;color:var(--text-muted);line-height:1.5;border-top:1px solid var(--border);padding-top:10px">
-                    <div><b>Kerakli hujjat:</b> ${esc(i.doc)}</div>
-                    <div style="margin-top:2px"><b>Mas’ul ekspert:</b> ${esc(i.respStr)}</div>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-          `}
+        <div id="crit-zone"></div>
       </div>
     </div>
   `;
 
-  const addBtn = $('#crit-add-btn');
-  if (addBtn) addBtn.onclick = () => ctx.navigate('add_entry');
+  function renderCritZone() {
+    const q = critState.search.trim().toLowerCase();
+    const filtered = IND.filter(i => {
+      if (critState.sec !== 'all' && i.sec !== critState.sec) return false;
+      if (q) {
+        const hay = `${i.id} ${i.name} ${i.doc} ${i.respStr} ${i.types.map(t => t[0]).join(' ')}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
 
+    const zone = $('#crit-zone');
+    if (filtered.length === 0) {
+      zone.innerHTML = emptyStateHtml({ iconName: 'book-open', title: 'Mezon topilmadi', desc: 'Qidiruv so‘zini o‘zgartirib ko‘ring.' });
+      return;
+    }
+
+    zone.innerHTML = `
+      <div class="grid-2">
+        ${filtered.map(i => `
+          <div class="card card-compact" style="box-shadow:none;${highlightId === i.id ? 'border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-glow)' : ''}">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px">
+              <div>
+                <span class="badge ${i.sec === 'A' ? 'badge-primary' : (i.sec === 'B' ? 'badge-success' : 'badge-warning')}">${i.sec}-${i.id}</span>
+                <h4 style="font-size:14.5px;font-weight:600;margin-top:6px">${esc(i.name)}</h4>
+              </div>
+              <span class="badge badge-neutral" style="font-weight:700">Maks: ${i.max} ball</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:12px">
+              ${i.types.map(t => `
+                <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:6px 10px;border-radius:7px;background:var(--bg-subtle)">
+                  <span>${esc(t[0])}</span>
+                  <b style="color:var(--primary)">+${t[1]} ball</b>
+                </div>
+              `).join('')}
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);line-height:1.5;border-top:1px solid var(--border);padding-top:10px">
+              <div><b>Kerakli hujjat:</b> ${esc(i.doc)}</div>
+              <div style="margin-top:2px"><b>Mas’ul ekspert:</b> ${esc(i.respStr)}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  const ab = $('#crit-add-btn');
+  if (ab) ab.onclick = () => ctx.navigate('add_entry');
   $$('[data-csec]').forEach(btn => {
-    btn.onclick = () => { critState.sec = btn.dataset.csec; renderCriteria(el, ctx); };
+    btn.onclick = () => {
+      critState.sec = btn.dataset.csec;
+      $$('[data-csec]').forEach(b => b.classList.toggle('active', b.dataset.csec === critState.sec));
+      renderCritZone();
+    };
   });
+  $('#crit-search').oninput = e => { critState.search = e.target.value; renderCritZone(); };
 
-  const sInp = $('#crit-search');
-  sInp.oninput = () => {
-    const pos = sInp.selectionStart;
-    critState.search = sInp.value;
-    renderCriteria(el, ctx);
-    const ni = $('#crit-search');
-    if (ni) { ni.focus(); ni.setSelectionRange(pos, pos); }
-  };
+  renderCritZone();
 }

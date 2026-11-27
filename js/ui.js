@@ -1,4 +1,4 @@
-// Reusable UI utilities: escaping, themes, toasts, modals, avatars, skeletons, counters
+// Reusable UI utilities V2: escaping, CSV formula defense, themes, toasts, modals with focus trap, drawers, Tashkent TZ
 import { icon } from './icons.js';
 
 export const $ = (sel, root = document) => root.querySelector(sel);
@@ -12,7 +12,34 @@ export const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({
   "'": '&#39;'
 }[m]));
 
-export const csvCell = s => `"${String(s ?? '').replace(/"/g, '""')}"`;
+// RFC-4180 CSV escaping + Formula Injection defense (=, +, -, @, tab, CR)
+export function csvCell(s) {
+  let v = String(s ?? '');
+  if (/^[=+\-@\t\r]/.test(v)) {
+    v = "'" + v;
+  }
+  return `"${v.replace(/"/g, '""')}"`;
+}
+
+export async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
 
 export function formatDateUz(dateStr) {
   if (!dateStr) return '—';
@@ -21,8 +48,24 @@ export function formatDateUz(dateStr) {
   return d.toLocaleDateString('uz-UZ', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+export function formatDateTimeTashkent(isoOrEpoch) {
+  if (!isoOrEpoch) return '—';
+  const d = typeof isoOrEpoch === 'number'
+    ? new Date(isoOrEpoch < 1e12 ? isoOrEpoch * 1000 : isoOrEpoch)
+    : new Date(isoOrEpoch);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('uz-UZ', {
+    timeZone: 'Asia/Tashkent',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 /* ==========================================================================
-   THEME ENGINE (Light / Dark / System with zero flash)
+   THEME ENGINE
    ========================================================================== */
 export function getThemePref() {
   return localStorage.getItem('reyting_theme') || 'system';
@@ -41,11 +84,12 @@ export function applyTheme(pref) {
   document.documentElement.setAttribute('data-theme-pref', valid);
   document.documentElement.style.colorScheme = resolved;
   const meta = document.getElementById('meta-theme-color');
-  if (meta) meta.setAttribute('content', resolved === 'dark' ? '#0B1120' : '#F8FAFC');
+  if (meta) meta.setAttribute('content', resolved === 'dark' ? '#0B0E14' : '#F5F6F8');
   return resolved;
 }
 
 export function initThemeListener(onChange) {
+  if (!window.matchMedia) return;
   const mq = window.matchMedia('(prefers-color-scheme: dark)');
   mq.addEventListener('change', () => {
     if (getThemePref() === 'system') {
@@ -56,7 +100,7 @@ export function initThemeListener(onChange) {
 }
 
 /* ==========================================================================
-   TOAST NOTIFICATIONS
+   TOASTS
    ========================================================================== */
 export function toast(message, type = 'info', duration = 3800) {
   const root = document.getElementById('toast-root');
@@ -71,7 +115,7 @@ export function toast(message, type = 'info', duration = 3800) {
   el.className = `toast ${type}`;
   el.setAttribute('role', 'status');
   el.innerHTML = `
-    ${icon(iconMap[type] || 'bell', 18)}
+    ${icon(iconMap[type] || 'bell', 17)}
     <div style="flex:1;line-height:1.45">${esc(message)}</div>
     <button type="button" class="btn-ghost btn-icon btn-sm" aria-label="Yopish" style="width:24px;height:24px">${icon('x', 14)}</button>
   `;
@@ -87,9 +131,10 @@ export function toast(message, type = 'info', duration = 3800) {
 }
 
 /* ==========================================================================
-   MODAL / DIALOG SYSTEM (Escape + Backdrop + Focus)
+   MODAL & RIGHT DETAIL DRAWER (Focus Trap + Focus Restoration)
    ========================================================================== */
 let activeModalCleanup = null;
+let previousFocusEl = null;
 
 export function closeModal() {
   const root = document.getElementById('modal-root');
@@ -98,10 +143,39 @@ export function closeModal() {
     activeModalCleanup();
     activeModalCleanup = null;
   }
+  if (previousFocusEl && typeof previousFocusEl.focus === 'function') {
+    previousFocusEl.focus();
+    previousFocusEl = null;
+  }
+}
+
+function attachFocusTrap(container, onClose) {
+  const onKey = e => {
+    if (e.key === 'Escape') {
+      onClose();
+      return;
+    }
+    if (e.key === 'Tab') {
+      const focusable = Array.from(container.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  };
+  document.addEventListener('keydown', onKey);
+  return () => document.removeEventListener('keydown', onKey);
 }
 
 export function openModal({ title, bodyHtml, footerHtml = '', size = 'md', onMount = null }) {
   closeModal();
+  previousFocusEl = document.activeElement;
   const root = document.getElementById('modal-root');
   if (!root) return;
 
@@ -121,21 +195,46 @@ export function openModal({ title, bodyHtml, footerHtml = '', size = 'md', onMou
   `;
 
   const backdrop = root.querySelector('.modal-backdrop');
-  const closeBtn = root.querySelector('#modal-close-x');
-  closeBtn.onclick = closeModal;
-  backdrop.onclick = e => {
-    if (e.target === backdrop) closeModal();
-  };
+  const panel = root.querySelector('.modal-panel');
+  root.querySelector('#modal-close-x').onclick = closeModal;
+  backdrop.onclick = e => { if (e.target === backdrop) closeModal(); };
+  activeModalCleanup = attachFocusTrap(panel, closeModal);
 
-  const onKey = e => {
-    if (e.key === 'Escape') closeModal();
-  };
-  document.addEventListener('keydown', onKey);
-  activeModalCleanup = () => document.removeEventListener('keydown', onKey);
+  if (onMount) onMount(panel);
+  const firstInput = panel.querySelector('input, textarea, select, button.btn-primary');
+  if (firstInput) setTimeout(() => firstInput.focus(), 35);
+}
 
-  if (onMount) onMount(root.querySelector('.modal-panel'));
-  const firstInput = root.querySelector('input, textarea, select, button.btn-primary');
-  if (firstInput) setTimeout(() => firstInput.focus(), 40);
+export function openDetailDrawer({ title, subtitle = '', bodyHtml, footerHtml = '', onMount = null }) {
+  closeModal();
+  previousFocusEl = document.activeElement;
+  const root = document.getElementById('modal-root');
+  if (!root) return;
+
+  root.innerHTML = `
+    <div class="drawer-right-backdrop" role="dialog" aria-modal="true" aria-labelledby="drawer-title-el">
+      <div class="drawer-right-panel">
+        <div class="modal-head">
+          <div>
+            <h3 class="modal-title" id="drawer-title-el">${esc(title)}</h3>
+            ${subtitle ? `<div style="font-size:12px;color:var(--text-muted);margin-top:2px">${esc(subtitle)}</div>` : ''}
+          </div>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" id="drawer-close-x" aria-label="Yopish">
+            ${icon('x', 16)}
+          </button>
+        </div>
+        <div class="modal-body" style="flex:1">${bodyHtml}</div>
+        ${footerHtml ? `<div class="modal-foot">${footerHtml}</div>` : ''}
+      </div>
+    </div>
+  `;
+
+  const backdrop = root.querySelector('.drawer-right-backdrop');
+  const panel = root.querySelector('.drawer-right-panel');
+  root.querySelector('#drawer-close-x').onclick = closeModal;
+  backdrop.onclick = e => { if (e.target === backdrop) closeModal(); };
+  activeModalCleanup = attachFocusTrap(panel, closeModal);
+  if (onMount) onMount(panel);
 }
 
 export function confirmDialog({ title, message, confirmText = 'Tasdiqlash', cancelText = 'Bekor qilish', danger = false }) {
@@ -156,14 +255,14 @@ export function confirmDialog({ title, message, confirmText = 'Tasdiqlash', canc
 }
 
 /* ==========================================================================
-   AVATARS, BADGES, EMPTY STATES, SKELETONS, ANIMATED COUNTERS
+   AVATARS, BADGES, EMPTY STATES, SKELETONS, COUNTERS
    ========================================================================== */
 const AVATAR_TONES = [
-  ['#EFF6FF', '#1D4ED8', 'rgba(37,99,235,0.2)'],
-  ['#F0FDFA', '#0F766E', 'rgba(13,148,136,0.2)'],
-  ['#EEF2FF', '#4338CA', 'rgba(67,56,202,0.2)'],
-  ['#FFFBEB', '#B45309', 'rgba(217,119,6,0.2)'],
-  ['#F1F5F9', '#334155', 'rgba(51,65,85,0.2)']
+  ['#EFF4FF', '#2448C7', 'rgba(36,72,199,0.22)'],
+  ['#F0FDFA', '#0F766E', 'rgba(15,118,110,0.22)'],
+  ['#F5F3FF', '#5B21B6', 'rgba(91,33,182,0.22)'],
+  ['#FFFBEB', '#B45309', 'rgba(180,83,9,0.22)'],
+  ['#F1F5F9', '#334155', 'rgba(51,65,85,0.22)']
 ];
 
 export function avatarHtml(name, size = '') {
@@ -179,22 +278,18 @@ export function avatarHtml(name, size = '') {
 }
 
 export function badgeStatus(status) {
-  if (status === 'approved') {
-    return `<span class="badge badge-success">${icon('check-circle', 13)} Tasdiqlangan</span>`;
-  }
-  if (status === 'rejected') {
-    return `<span class="badge badge-error">${icon('x-circle', 13)} Rad etilgan</span>`;
-  }
-  return `<span class="badge badge-warning">${icon('clock', 13)} Tekshiruvda</span>`;
+  if (status === 'approved') return `<span class="badge badge-success">${icon('check-circle', 12)} Tasdiqlangan</span>`;
+  if (status === 'rejected') return `<span class="badge badge-error">${icon('x-circle', 12)} Rad etilgan</span>`;
+  return `<span class="badge badge-warning">${icon('clock', 12)} Tekshiruvda</span>`;
 }
 
 export function emptyStateHtml({ iconName = 'clipboard-list', title, desc, actionHtml = '' }) {
   return `
     <div class="empty-state">
-      <div class="empty-icon">${icon(iconName, 24)}</div>
+      <div class="empty-icon">${icon(iconName, 22)}</div>
       <h4 class="empty-title">${esc(title)}</h4>
       <p class="empty-desc">${esc(desc)}</p>
-      ${actionHtml ? `<div style="margin-top:8px">${actionHtml}</div>` : ''}
+      ${actionHtml ? `<div style="margin-top:6px">${actionHtml}</div>` : ''}
     </div>
   `;
 }
@@ -206,14 +301,14 @@ export function skeletonDashboardHtml() {
         ${[1, 2, 3, 4].map(() => `
           <div class="kpi-card">
             <div class="skeleton" style="height:14px;width:55%"></div>
-            <div class="skeleton" style="height:34px;width:45%"></div>
+            <div class="skeleton" style="height:30px;width:45%"></div>
             <div class="skeleton" style="height:12px;width:75%"></div>
           </div>
         `).join('')}
       </div>
       <div class="grid-2">
-        <div class="card"><div class="skeleton" style="height:240px;width:100%"></div></div>
-        <div class="card"><div class="skeleton" style="height:240px;width:100%"></div></div>
+        <div class="card"><div class="skeleton" style="height:220px;width:100%"></div></div>
+        <div class="card"><div class="skeleton" style="height:220px;width:100%"></div></div>
       </div>
     </div>
   `;
@@ -230,7 +325,7 @@ export function animateCounters(container = document) {
       return;
     }
     const start = performance.now();
-    const duration = 520;
+    const duration = 480;
     const step = now => {
       const p = Math.min(1, (now - start) / duration);
       const eased = 1 - Math.pow(1 - p, 3);

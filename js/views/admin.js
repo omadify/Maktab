@@ -1,35 +1,37 @@
-// Admin Panel (Add/Edit Users, Bulk Excel/CSV Import, Roles, Password Reset), Reports & Settings
-import { ROLE, IMAP, getRanking, makeLogin, tempPw } from '../config.js';
-import { api } from '../api.js';
+// User Management Pro (KPIs, User Details Drawer, Safe Import Preview, Privilege Protection), Report Center & Settings
+import { IND, ROLE, IMAP, SEC, getRanking, extractSubjectLabel, makeLogin } from '../config.js';
+import { api, isV4SecurityActive } from '../api.js';
 import { icon } from '../icons.js';
 import {
   $,
   $$,
   esc,
   csvCell,
+  copyToClipboard,
   toast,
   openModal,
+  openDetailDrawer,
   closeModal,
   confirmDialog,
   avatarHtml,
   emptyStateHtml,
   getThemePref,
-  applyTheme
+  applyTheme,
+  formatDateTimeTashkent
 } from '../ui.js';
 import { exportRankingCSV } from './ranking.js';
 
 let adminState = { tab: 'users', search: '', roleFilter: 'all' };
+let reportState = { startDate: '', endDate: '' };
 
 function downloadCredsCSV(list) {
   const rows = list.map(c => [c.login, c.pw, c.name, c.subject || ''].map(csvCell).join(';'));
-  const b = new Blob(['\ufeffLogin;Vaqtinchalik Parol;F.I.Sh.;Fan\n' + rows.join('\n')], {
-    type: 'text/csv;charset=utf-8'
-  });
+  const b = new Blob(['\ufeffLogin;Vaqtinchalik Parol;F.I.Sh.;Fan\n' + rows.join('\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(b);
   a.download = 'pedagoglar_parollari.csv';
   a.click();
-  toast('Parollar ro‘yxati CSV faylda yuklab olindi.', 'success');
+  toast('Vaqtinchalik parollar CSV faylda yuklab olindi.', 'success');
 }
 
 function renderCredBanner(list) {
@@ -40,25 +42,17 @@ function renderCredBanner(list) {
         <div style="display:flex;align-items:center;gap:10px">
           <div class="kpi-icon success">${icon('check-circle', 18)}</div>
           <div>
-            <h3 class="card-title">${list.length} ta pedagog uchun login va parol yaratildi</h3>
-            <p class="card-subtitle" style="color:var(--text-2)">Ushbu ma’lumotlarni yuklab oling. Pedagoglar birinchi kirishda parolni yangilaydilar.</p>
+            <h3 class="card-title">${list.length} ta hisob uchun bir martalik kirish parollari yaratildi</h3>
+            <p class="card-subtitle" style="color:var(--text-2)">Xavfsizlik sababli parollar faqat hozir ko‘rsatilmoqda. CSV faylni yuklab oling.</p>
           </div>
         </div>
         <button type="button" class="btn btn-primary" id="dl-creds-btn">${icon('download', 15)} Parollarni CSV yuklab olish</button>
       </div>
-
       <div class="table-wrap" style="max-height:220px;overflow-y:auto">
         <table class="data-table">
           <thead><tr><th>Login</th><th>Vaqtinchalik parol</th><th>F.I.Sh.</th><th>Sinf / Fan</th></tr></thead>
           <tbody>
-            ${list.map(c => `
-              <tr>
-                <td><b>${esc(c.login)}</b></td>
-                <td><code>${esc(c.pw)}</code></td>
-                <td>${esc(c.name)}</td>
-                <td>${esc(c.subject || '—')}</td>
-              </tr>
-            `).join('')}
+            ${list.map(c => `<tr><td><b>${esc(c.login)}</b></td><td><code>${esc(c.pw)}</code></td><td>${esc(c.name)}</td><td>${esc(c.subject || '—')}</td></tr>`).join('')}
           </tbody>
         </table>
       </div>
@@ -67,42 +61,58 @@ function renderCredBanner(list) {
 }
 
 /* ==========================================================================
-   ADMINISTRATOR PANELI (Director & IT Admin)
+   USER MANAGEMENT PRO (Director & IT Admin)
    ========================================================================== */
 export function renderAdmin(el, ctx) {
-  const { me, users, lastCreds, setLastCreds } = ctx;
-  const q = adminState.search.trim().toLowerCase();
+  const { me, users, monitoring, lastCreds, setLastCreds } = ctx;
+  const isDirector = me.role === 'director';
+  const teachersCount = users.filter(u => u.role === 'teacher').length;
+  const reviewersCount = users.filter(u => u.role === 'reviewer').length;
+  const activeCount = users.filter(u => u.active).length;
+  const inactiveCount = users.length - activeCount;
 
-  const filteredUsers = users.filter(u => {
-    if (adminState.roleFilter !== 'all' && u.role !== adminState.roleFilter) return false;
-    if (q) {
-      const hay = `${u.login} ${u.name} ${u.subject || ''}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
+  const presenceMap = new Map((monitoring?.presence || []).map(p => [p.uid, p]));
+  const nowMs = monitoring?.serverTime ? new Date(monitoring.serverTime).getTime() : Date.now();
+  const onlineNow = (monitoring?.presence || []).filter(p => p.active_sessions > 0 && p.last_seen_at && (nowMs - new Date(p.last_seen_at).getTime()) <= 2 * 60 * 1000).length;
 
   el.innerHTML = `
     <div class="stack-v">
       <div class="page-header">
         <div>
-          <h1 class="page-title">Administrator paneli</h1>
-          <p class="page-desc">Jami ${users.length} nafar xodim va pedagog · Barcha ma’lumotlar markaziy bazada saqlanadi.</p>
+          <h1 class="page-title">Foydalanuvchilar boshqaruvi</h1>
+          <p class="page-desc">Pedagoglar va xodimlar hisoblarini boshqarish, tahrirlash va Excel/CSV ommaviy import.</p>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-top"><span class="kpi-label">Jami foydalanuvchilar</span><span class="kpi-icon primary">${icon('users', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value">${users.length}</span><span class="kpi-unit">nafar</span></div>
+          <div class="kpi-foot"><span>${teachersCount} pedagog · ${reviewersCount} mas’ul</span></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-top"><span class="kpi-label">Faol akkauntlar</span><span class="kpi-icon success">${icon('user-check', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value">${activeCount}</span><span class="kpi-unit">ta</span></div>
+          <div class="kpi-foot"><span>Faolsiz: ${inactiveCount} ta</span></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-top"><span class="kpi-label">Hozir faol (onlayn)</span><span class="kpi-icon">${icon('radio', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value">${monitoring?.available ? onlineNow : '—'}</span><span class="kpi-unit">${monitoring?.available ? 'nafar' : ''}</span></div>
+          <div class="kpi-foot"><span>${monitoring?.available ? 'So‘nggi 2 daqiqada' : 'V4 migratsiyadan so‘ng'}</span></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-top"><span class="kpi-label">Xavfsizlik holati</span><span class="kpi-icon ${isV4SecurityActive() ? 'success' : 'warning'}">${icon('shield', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value" style="font-size:18px">${isV4SecurityActive() ? 'V4 Himoyalangan' : 'Bazaviy rejim'}</span></div>
+          <div class="kpi-foot"><span>${users.filter(u => u.active && u.must_change).length} ta parol almashtirishi kerak</span></div>
         </div>
       </div>
 
       <div id="cred-zone">${renderCredBanner(lastCreds)}</div>
 
       <div class="tabs-pill">
-        <button type="button" class="tab-btn ${adminState.tab === 'users' ? 'active' : ''}" data-atab="users">
-          ${icon('users', 15)} Xodimlar ro‘yxati <span class="tab-count">${users.length}</span>
-        </button>
-        <button type="button" class="tab-btn ${adminState.tab === 'add' ? 'active' : ''}" data-atab="add">
-          ${icon('user-plus', 15)} Bitta pedagog qo‘shish
-        </button>
-        <button type="button" class="tab-btn ${adminState.tab === 'import' ? 'active' : ''}" data-atab="import">
-          ${icon('file-spreadsheet', 15)} Ommaviy yuklash (Excel / CSV)
-        </button>
+        <button type="button" class="tab-btn ${adminState.tab === 'users' ? 'active' : ''}" data-atab="users">${icon('users', 14)} Xodimlar ro‘yxati <span class="tab-count">${users.length}</span></button>
+        <button type="button" class="tab-btn ${adminState.tab === 'add' ? 'active' : ''}" data-atab="add">${icon('user-plus', 14)} Yangi qo‘shish</button>
+        <button type="button" class="tab-btn ${adminState.tab === 'import' ? 'active' : ''}" data-atab="import">${icon('file-spreadsheet', 14)} Ommaviy import (Excel / CSV)</button>
       </div>
 
       <div id="admin-tab-body"></div>
@@ -117,129 +127,196 @@ export function renderAdmin(el, ctx) {
   });
 
   const body = $('#admin-tab-body');
+  if (adminState.tab === 'users') renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector);
+  else if (adminState.tab === 'add') renderAddSingleUserTab(body, ctx, isDirector);
+  else renderBulkImportTab(body, ctx, setLastCreds);
+}
 
-  if (adminState.tab === 'users') {
-    body.innerHTML = `
-      <div class="card">
-        <div class="filter-bar">
-          <div class="filter-controls">
-            <div class="input-icon-wrap" style="min-width:220px;max-width:320px;flex:1">
-              <span class="input-leading">${icon('search', 15)}</span>
-              <input id="adm-search" class="input has-leading" type="search" value="${esc(adminState.search)}" placeholder="F.I.Sh., login yoki fan…">
-            </div>
-            <select id="adm-role-filter" class="input" style="width:auto;min-width:170px">
-              <option value="all" ${adminState.roleFilter === 'all' ? 'selected' : ''}>Barcha rollar</option>
-              ${Object.entries(ROLE).map(([k, v]) => `<option value="${k}" ${adminState.roleFilter === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}
-            </select>
+function renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector) {
+  const { me, users, monitoring } = ctx;
+
+  body.innerHTML = `
+    <div class="card">
+      <div class="filter-bar">
+        <div class="filter-controls">
+          <div class="input-icon-wrap" style="min-width:210px;max-width:300px;flex:1">
+            <span class="input-leading">${icon('search', 15)}</span>
+            <input id="adm-search" class="input has-leading" type="search" value="${esc(adminState.search)}" placeholder="F.I.Sh., login yoki fan…">
           </div>
-          <span style="font-size:13px;color:var(--text-muted)">${filteredUsers.length} ta yozuv</span>
+          <select id="adm-role-filter" class="input" style="width:auto;min-width:165px">
+            <option value="all" ${adminState.roleFilter === 'all' ? 'selected' : ''}>Barcha rollar</option>
+            ${Object.entries(ROLE).map(([k, v]) => `<option value="${k}" ${adminState.roleFilter === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}
+          </select>
         </div>
+        <span id="adm-count" style="font-size:12.5px;color:var(--text-muted)"></span>
+      </div>
+      <div id="adm-table-zone"></div>
+    </div>
+  `;
 
-        ${filteredUsers.length === 0
-          ? emptyStateHtml({ iconName: 'users', title: 'Foydalanuvchi topilmadi', desc: 'Qidiruv yoki rol filtrini o‘zgartirib ko‘ring.' })
-          : `
-            <div class="table-wrap desktop-table-only">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Xodim</th>
-                    <th>Login</th>
-                    <th>Sinf / Fan / Lavozim</th>
-                    <th>Rol</th>
-                    <th>Reytingda</th>
-                    <th>Holat</th>
-                    <th style="text-align:right">Amallar</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${filteredUsers.map(u => `
-                    <tr style="${u.active ? '' : 'opacity:0.55'}">
-                      <td>
-                        <div style="display:flex;align-items:center;gap:10px">
-                          ${avatarHtml(u.name, 'sm')}
-                          <span style="font-weight:600">${esc(u.name)}</span>
-                        </div>
-                      </td>
-                      <td><code>${esc(u.login)}</code></td>
-                      <td style="color:var(--text-2)">${esc(u.subject || '—')}</td>
-                      <td>
-                        <select class="input" style="min-height:32px;padding:4px 8px;font-size:12.5px;width:auto" data-u-role="${u.id}" ${u.id === me.id ? 'disabled' : ''}>
-                          ${Object.entries(ROLE).map(([r, l]) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${esc(l)}</option>`).join('')}
-                        </select>
-                      </td>
-                      <td>
-                        <input type="checkbox" class="checkbox" data-u-ranked="${u.id}" ${u.ranked ? 'checked' : ''} aria-label="Reytingda qatnashadi">
-                      </td>
-                      <td>
-                        <span class="badge ${u.active ? 'badge-success' : 'badge-neutral'}">${u.active ? 'Faol' : 'O‘chirilgan'}</span>
-                      </td>
-                      <td style="text-align:right">
-                        <div style="display:inline-flex;gap:6px">
-                          <button type="button" class="btn btn-secondary btn-sm" data-u-edit="${u.id}" title="Tahrirlash">${icon('edit-3', 14)}</button>
-                          <button type="button" class="btn btn-secondary btn-sm" data-u-reset="${u.id}" title="Parolni tiklash">${icon('key', 14)}</button>
-                          ${u.id !== me.id ? `<button type="button" class="btn btn-danger btn-sm" data-u-toggle="${u.id}">${u.active ? 'O‘chirish' : 'Yoqish'}</button>` : ''}
-                        </div>
-                      </td>
-                    </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            </div>
+  function drawUsers() {
+    const q = adminState.search.trim().toLowerCase();
+    const filtered = users.filter(u => {
+      if (adminState.roleFilter !== 'all' && u.role !== adminState.roleFilter) return false;
+      if (q && !`${u.login} ${u.name} ${u.subject || ''}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    $('#adm-count').textContent = `${filtered.length} ta yozuv`;
+    const zone = $('#adm-table-zone');
 
-            <div class="mobile-card-list">
-              ${filteredUsers.map(u => `
-                <div class="card card-compact" style="box-shadow:none;${u.active ? '' : 'opacity:0.6'}">
-                  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px">
-                    <div style="display:flex;align-items:center;gap:10px;min-width:0">
+    if (!filtered.length) {
+      zone.innerHTML = emptyStateHtml({ iconName: 'users', title: 'Foydalanuvchi topilmadi', desc: 'Qidiruv yoki rol filtrini o‘zgartirib ko‘ring.' });
+      return;
+    }
+
+    const activeDirectorsCount = users.filter(x => x.role === 'director' && x.active).length;
+
+    zone.innerHTML = `
+      <div class="table-wrap desktop-table-only">
+        <table class="data-table">
+          <thead>
+            <tr><th>Xodim</th><th>Login</th><th>Sinf / Fan</th><th>Rol</th><th>Reyting</th><th>Oxirgi faoliyat</th><th>Holat</th><th style="text-align:right">Amallar</th></tr>
+          </thead>
+          <tbody>
+            ${filtered.map(u => {
+              const pr = presenceMap.get(u.id);
+              const isOnline = pr && pr.active_sessions > 0 && pr.last_seen_at && (nowMs - new Date(pr.last_seen_at).getTime()) <= 2 * 60 * 1000;
+              const isRecent = pr && pr.active_sessions > 0 && pr.last_seen_at && (nowMs - new Date(pr.last_seen_at).getTime()) <= 15 * 60 * 1000;
+              const dotClass = isOnline ? 'online' : (isRecent ? 'recent' : 'offline');
+              const isTargetDirector = u.role === 'director';
+              const canManageTarget = isDirector || !isTargetDirector;
+              const isLastDirector = isTargetDirector && u.active && activeDirectorsCount <= 1;
+
+              return `
+                <tr style="${u.active ? '' : 'opacity:0.55'}">
+                  <td>
+                    <div style="display:flex;align-items:center;gap:10px;cursor:pointer" data-u-drawer="${u.id}">
                       ${avatarHtml(u.name, 'sm')}
-                      <div style="min-width:0">
-                        <div style="font-weight:600;font-size:14px">${esc(u.name)}</div>
-                        <div style="font-size:12px;color:var(--text-muted)"><code>${esc(u.login)}</code> · ${esc(ROLE[u.role] || u.role)}</div>
+                      <div>
+                        <div style="font-weight:600;display:flex;align-items:center;gap:6px">
+                          <span class="presence-dot ${dotClass}" title="${isOnline ? 'Onlayn' : (isRecent ? 'Yaqinda faol' : 'Oflayn')}"></span>
+                          ${esc(u.name)}
+                        </div>
+                        <div style="font-size:11.5px;color:var(--text-muted)">Ro‘yxatdan: ${u.created ? formatDateTimeTashkent(u.created).split(',')[0] : '—'}</div>
                       </div>
                     </div>
-                    <span class="badge ${u.active ? 'badge-success' : 'badge-neutral'}">${u.active ? 'Faol' : 'Nofaol'}</span>
-                  </div>
-                  <div style="font-size:12.5px;color:var(--text-2);margin-bottom:10px">${esc(u.subject || '—')}</div>
-                  <div style="display:flex;gap:8px;flex-wrap:wrap">
-                    <button type="button" class="btn btn-secondary btn-sm" style="flex:1" data-u-edit="${u.id}">${icon('edit-3', 14)} Tahrirlash</button>
-                    <button type="button" class="btn btn-secondary btn-sm" style="flex:1" data-u-reset="${u.id}">${icon('key', 14)} Parol</button>
-                    ${u.id !== me.id ? `<button type="button" class="btn btn-danger btn-sm" data-u-toggle="${u.id}">${u.active ? 'O‘chirish' : 'Yoqish'}</button>` : ''}
+                  </td>
+                  <td><code>${esc(u.login)}</code></td>
+                  <td style="color:var(--text-2)">${esc(u.subject || '—')}</td>
+                  <td>
+                    <select class="input" style="min-height:32px;padding:4px 8px;font-size:12px;width:auto" data-u-role="${u.id}" ${u.id === me.id || !canManageTarget || isLastDirector ? 'disabled' : ''}>
+                      ${Object.entries(ROLE).map(([r, l]) => {
+                        const disabledOpt = r === 'director' && !isDirector ? 'disabled' : '';
+                        return `<option value="${r}" ${u.role === r ? 'selected' : ''} ${disabledOpt}>${esc(l)}</option>`;
+                      }).join('')}
+                    </select>
+                  </td>
+                  <td><input type="checkbox" class="checkbox" data-u-ranked="${u.id}" ${u.ranked ? 'checked' : ''} aria-label="Reytingda qatnashadi"></td>
+                  <td style="font-size:12px;color:var(--text-muted)">${pr?.last_seen_at ? formatDateTimeTashkent(pr.last_seen_at) : (u.last_login_at ? formatDateTimeTashkent(u.last_login_at) : '—')}</td>
+                  <td><span class="badge ${u.active ? 'badge-success' : 'badge-neutral'}">${u.active ? 'Faol' : 'O‘chirilgan'}</span></td>
+                  <td style="text-align:right">
+                    <div style="display:inline-flex;gap:5px">
+                      <button type="button" class="btn btn-ghost btn-sm" data-u-drawer="${u.id}" title="Tafsilotlar">${icon('info', 14)}</button>
+                      <button type="button" class="btn btn-secondary btn-sm" data-u-edit="${u.id}" ${!canManageTarget ? 'disabled' : ''} title="Tahrirlash">${icon('edit-3', 14)}</button>
+                      <button type="button" class="btn btn-secondary btn-sm" data-u-reset="${u.id}" ${!canManageTarget ? 'disabled' : ''} title="Parolni tiklash">${icon('key', 14)}</button>
+                      ${u.id !== me.id && !isLastDirector && canManageTarget ? `<button type="button" class="btn btn-danger btn-sm" data-u-toggle="${u.id}">${u.active ? 'O‘chirish' : 'Yoqish'}</button>` : ''}
+                    </div>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="mobile-card-list">
+        ${filtered.map(u => {
+          const canManageTarget = isDirector || u.role !== 'director';
+          const isLastDirector = u.role === 'director' && u.active && activeDirectorsCount <= 1;
+          return `
+            <div class="card card-compact" style="box-shadow:none;${u.active ? '' : 'opacity:0.6'}">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0" data-u-drawer="${u.id}">
+                  ${avatarHtml(u.name, 'sm')}
+                  <div style="min-width:0">
+                    <div style="font-weight:600;font-size:14px">${esc(u.name)}</div>
+                    <div style="font-size:12px;color:var(--text-muted)"><code>${esc(u.login)}</code> · ${esc(ROLE[u.role] || u.role)}</div>
                   </div>
                 </div>
-              `).join('')}
+                <span class="badge ${u.active ? 'badge-success' : 'badge-neutral'}">${u.active ? 'Faol' : 'Nofaol'}</span>
+              </div>
+              <div style="font-size:12.5px;color:var(--text-2);margin-bottom:10px">${esc(u.subject || '—')}</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button type="button" class="btn btn-secondary btn-sm" style="flex:1" data-u-edit="${u.id}" ${!canManageTarget ? 'disabled' : ''}>Tahrirlash</button>
+                <button type="button" class="btn btn-secondary btn-sm" style="flex:1" data-u-reset="${u.id}" ${!canManageTarget ? 'disabled' : ''}>Parol</button>
+                ${u.id !== me.id && !isLastDirector && canManageTarget ? `<button type="button" class="btn btn-danger btn-sm" data-u-toggle="${u.id}">${u.active ? 'O‘chirish' : 'Yoqish'}</button>` : ''}
+              </div>
             </div>
-          `}
+          `;
+        }).join('')}
       </div>
     `;
 
-    const sInp = $('#adm-search');
-    sInp.oninput = () => {
-      const pos = sInp.selectionStart;
-      adminState.search = sInp.value;
-      renderAdmin(el, ctx);
-      const ni = $('#adm-search');
-      if (ni) { ni.focus(); ni.setSelectionRange(pos, pos); }
-    };
-    $('#adm-role-filter').onchange = e => { adminState.roleFilter = e.target.value; renderAdmin(el, ctx); };
+    $$('[data-u-drawer]', zone).forEach(elBtn => {
+      elBtn.onclick = () => {
+        const u = users.find(x => x.id === Number(elBtn.dataset.uDrawer));
+        if (!u) return;
+        const pr = presenceMap.get(u.id);
+        const uLogs = (monitoring?.activities || []).filter(a => a.actor_uid === u.id).slice(0, 6);
+        const uLogins = (monitoring?.logins || []).filter(l => l.uid === u.id).slice(0, 5);
+        openDetailDrawer({
+          title: u.name,
+          subtitle: `${ROLE[u.role] || u.role} · @${u.login}`,
+          bodyHtml: `
+            <div class="stack-v" style="gap:16px">
+              <div style="padding:14px;border-radius:12px;background:var(--bg-subtle);border:1px solid var(--border);font-size:13px;display:flex;flex-direction:column;gap:6px">
+                <div><b>Sinf / Fan:</b> ${esc(u.subject || '—')}</div>
+                <div><b>Holat:</b> ${u.active ? 'Faol' : 'O‘chirilgan'} · <b>Reytingda:</b> ${u.ranked ? 'Ha' : 'Yo‘q'}</div>
+                <div><b>Oxirgi kirish:</b> ${formatDateTimeTashkent(pr?.last_login_at || u.last_login_at)}</div>
+                <div><b>Oxirgi faoliyat:</b> ${formatDateTimeTashkent(pr?.last_seen_at || u.last_active_at)}</div>
+                <div><b>Faol sessiyalar:</b> ${pr?.active_sessions ?? '—'}</div>
+              </div>
+              <div>
+                <h4 style="font-size:13.5px;margin-bottom:8px">Oxirgi kirishlar</h4>
+                ${uLogins.length === 0 ? '<p style="font-size:12.5px;color:var(--text-muted)">Ma’lumot mavjud emas</p>' : `
+                  <div style="display:flex;flex-direction:column;gap:6px">
+                    ${uLogins.map(l => `<div style="font-size:12px;display:flex;justify-content:space-between;padding:6px 8px;border-radius:8px;border:1px solid var(--border)"><span>${formatDateTimeTashkent(l.created_at)} · ${esc(l.device_type)}</span><span class="badge ${l.success ? 'badge-success' : 'badge-error'}">${l.success ? 'OK' : 'Xato'}</span></div>`).join('')}
+                  </div>`}
+              </div>
+              <div>
+                <h4 style="font-size:13.5px;margin-bottom:8px">Oxirgi harakatlar</h4>
+                ${uLogs.length === 0 ? '<p style="font-size:12.5px;color:var(--text-muted)">Harakatlar qayd etilmagan</p>' : `
+                  <div style="display:flex;flex-direction:column;gap:6px">
+                    ${uLogs.map(a => `<div style="font-size:12px;display:flex;justify-content:space-between;padding:6px 8px;border-radius:8px;border:1px solid var(--border)"><span>${esc(a.action)}</span><span style="color:var(--text-muted)">${formatDateTimeTashkent(a.created_at)}</span></div>`).join('')}
+                  </div>`}
+              </div>
+            </div>
+          `,
+          footerHtml: `<button type="button" class="btn btn-primary" id="ud-prof">Profilni ochish</button>`,
+          onMount: panel => {
+            panel.querySelector('#ud-prof').onclick = () => { closeModal(); ctx.openProfile(u.id); };
+          }
+        });
+      };
+    });
 
-    $$('[data-u-role]').forEach(sel => {
+    $$('[data-u-role]', zone).forEach(sel => {
       sel.onchange = async () => {
-        const uid = Number(sel.dataset.uRole);
         try {
-          await api.updateUser(uid, { role: sel.value });
-          toast('Foydalanuvchi roli yangilandi.', 'success');
+          await api.updateUser(Number(sel.dataset.uRole), { role: sel.value });
+          toast('Rol yangilandi (eski sessiyalar bekor qilindi).', 'success');
           await ctx.refresh();
         } catch (err) {
           toast('Xatolik: ' + err.message, 'error');
+          await ctx.refresh();
         }
       };
     });
 
-    $$('[data-u-ranked]').forEach(chk => {
+    $$('[data-u-ranked]', zone).forEach(chk => {
       chk.onchange = async () => {
-        const uid = Number(chk.dataset.uRanked);
         try {
-          await api.updateUser(uid, { ranked: chk.checked ? 1 : 0 });
+          await api.updateUser(Number(chk.dataset.uRanked), { ranked: chk.checked ? 1 : 0 });
           toast('Reyting holati saqlandi.', 'success');
           await ctx.refresh();
         } catch (err) {
@@ -248,7 +325,7 @@ export function renderAdmin(el, ctx) {
       };
     });
 
-    $$('[data-u-edit]').forEach(btn => {
+    $$('[data-u-edit]', zone).forEach(btn => {
       btn.onclick = () => {
         const u = users.find(x => x.id === Number(btn.dataset.uEdit));
         if (!u) return;
@@ -256,18 +333,12 @@ export function renderAdmin(el, ctx) {
           title: 'Foydalanuvchini tahrirlash',
           bodyHtml: `
             <div class="stack-v" style="gap:14px">
-              <div class="field">
-                <label for="eu-name">F.I.Sh.</label>
-                <input id="eu-name" class="input" value="${esc(u.name)}" required>
-              </div>
-              <div class="field">
-                <label for="eu-subj">Sinf / Fan / Lavozim</label>
-                <input id="eu-subj" class="input" value="${esc(u.subject || '')}" placeholder="Masalan: 10-A sinf | Matematika">
-              </div>
+              <div class="field"><label for="eu-name">F.I.Sh.</label><input id="eu-name" class="input" value="${esc(u.name)}" required></div>
+              <div class="field"><label for="eu-subj">Sinf / Fan / Lavozim</label><input id="eu-subj" class="input" value="${esc(u.subject || '')}"></div>
               <div class="field">
                 <label for="eu-role">Rol</label>
                 <select id="eu-role" class="input" ${u.id === me.id ? 'disabled' : ''}>
-                  ${Object.entries(ROLE).map(([r, l]) => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+                  ${Object.entries(ROLE).map(([r, l]) => `<option value="${r}" ${u.role === r ? 'selected' : ''} ${r === 'director' && !isDirector ? 'disabled' : ''}>${esc(l)}</option>`).join('')}
                 </select>
               </div>
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
@@ -276,20 +347,19 @@ export function renderAdmin(el, ctx) {
               </label>
             </div>
           `,
-          footerHtml: `
-            <button type="button" class="btn btn-secondary" id="eu-cancel">Bekor qilish</button>
-            <button type="button" class="btn btn-primary" id="eu-save">Saqlash</button>
-          `,
+          footerHtml: `<button type="button" class="btn btn-secondary" id="eu-cancel">Bekor qilish</button><button type="button" class="btn btn-primary" id="eu-save">Saqlash</button>`,
           onMount: panel => {
             panel.querySelector('#eu-cancel').onclick = closeModal;
             panel.querySelector('#eu-save').onclick = async () => {
               const name = panel.querySelector('#eu-name').value.trim();
-              const subject = panel.querySelector('#eu-subj').value.trim();
-              const role = panel.querySelector('#eu-role').value;
-              const ranked = panel.querySelector('#eu-ranked').checked ? 1 : 0;
-              if (!name) return toast('F.I.Sh. bo‘sh bo‘lmasligi kerak.', 'warning');
+              if (!name) return toast('F.I.Sh. kiritilishi shart.', 'warning');
               try {
-                await api.updateUser(u.id, { name, subject, role, ranked });
+                await api.updateUser(u.id, {
+                  name,
+                  subject: panel.querySelector('#eu-subj').value.trim(),
+                  role: panel.querySelector('#eu-role').value,
+                  ranked: panel.querySelector('#eu-ranked').checked ? 1 : 0
+                });
                 closeModal();
                 toast('Ma’lumotlar yangilandi.', 'success');
                 await ctx.refresh();
@@ -302,40 +372,36 @@ export function renderAdmin(el, ctx) {
       };
     });
 
-    $$('[data-u-reset]').forEach(btn => {
+    $$('[data-u-reset]', zone).forEach(btn => {
       btn.onclick = async () => {
         const u = users.find(x => x.id === Number(btn.dataset.uReset));
         if (!u) return;
         const ok = await confirmDialog({
           title: 'Parolni tiklash',
-          message: `${u.name} (${u.login}) uchun yangi vaqtinchalik parol yaratilsinmi?`,
+          message: `${u.name} (${u.login}) uchun yangi bir martalik parol yaratilsinmi?`,
           confirmText: 'Tiklash'
         });
         if (!ok) return;
-        const np = tempPw();
         try {
-          await api.updateUser(u.id, { pw: np, must_change: 1 });
+          const res = await api.resetUserPassword(u);
           openModal({
-            title: 'Yangi vaqtinchalik parol yaratildi',
+            title: 'Yangi vaqtinchalik parol',
             bodyHtml: `
               <div class="stack-v" style="gap:12px">
-                <p style="margin:0;color:var(--text-2)">Ushbu ma’lumotlarni pedagogga taqdim eting. Birinchi kirishda parol almashtirilishi shart bo‘ladi.</p>
-                <div style="padding:14px;border-radius:10px;background:var(--bg-subtle);border:1px solid var(--border);display:flex;flex-direction:column;gap:8px">
-                  <div><b>F.I.Sh.:</b> ${esc(u.name)}</div>
-                  <div><b>Login:</b> <code>${esc(u.login)}</code></div>
-                  <div><b>Vaqtinchalik parol:</b> <code id="new-pw-val" style="font-size:14px;font-weight:700">${esc(np)}</code></div>
+                <p style="margin:0;color:var(--text-2)">Ushbu parol faqat bir marta ko‘rsatiladi. Pedagog birinchi kirishda uni yangilaydi.</p>
+                <div style="padding:14px;border-radius:10px;background:var(--bg-subtle);border:1px solid var(--border);display:flex;flex-direction:column;gap:6px">
+                  <div><b>F.I.Sh.:</b> ${esc(res.name)}</div>
+                  <div><b>Login:</b> <code>${esc(res.login)}</code></div>
+                  <div><b>Parol:</b> <code style="font-size:14px;font-weight:700">${esc(res.pw)}</code></div>
                 </div>
               </div>
             `,
-            footerHtml: `
-              <button type="button" class="btn btn-secondary" id="copy-pw-btn">${icon('copy', 15)} Nusxa olish</button>
-              <button type="button" class="btn btn-primary" id="close-pw-m">Yopish</button>
-            `,
+            footerHtml: `<button type="button" class="btn btn-secondary" id="copy-pw-btn">${icon('copy', 14)} Nusxa olish</button><button type="button" class="btn btn-primary" id="close-pw-m">Yopish</button>`,
             onMount: panel => {
               panel.querySelector('#close-pw-m').onclick = closeModal;
-              panel.querySelector('#copy-pw-btn').onclick = () => {
-                navigator.clipboard?.writeText(`Login: ${u.login}\nParol: ${np}`);
-                toast('Login va parol nusxalandi.', 'success');
+              panel.querySelector('#copy-pw-btn').onclick = async () => {
+                const copied = await copyToClipboard(`Login: ${res.login}\nParol: ${res.pw}`);
+                toast(copied ? 'Login va parol nusxalandi.' : 'Nusxalash imkoni bo‘lmadi — qo‘lda ko‘chirib oling.', copied ? 'success' : 'error');
               };
             }
           });
@@ -346,14 +412,14 @@ export function renderAdmin(el, ctx) {
       };
     });
 
-    $$('[data-u-toggle]').forEach(btn => {
+    $$('[data-u-toggle]', zone).forEach(btn => {
       btn.onclick = async () => {
         const u = users.find(x => x.id === Number(btn.dataset.uToggle));
         if (!u) return;
         const newActive = u.active ? 0 : 1;
         const ok = await confirmDialog({
-          title: newActive ? 'Hisobni faollashtirish' : 'Hisobni o‘chirish',
-          message: `${u.name} hisobini ${newActive ? 'faollashtirish' : 'vaqtincha o‘chirish'}ni tasdiqlaysizmi?`,
+          title: newActive ? 'Hisobni faollashtirish' : 'Hisobni faolsizlantirish',
+          message: `${u.name} hisobini ${newActive ? 'yoqish' : 'o‘chirish'}ni tasdiqlaysizmi?`,
           confirmText: newActive ? 'Yoqish' : 'O‘chirish',
           danger: !newActive
         });
@@ -367,273 +433,301 @@ export function renderAdmin(el, ctx) {
         }
       };
     });
-  } else if (adminState.tab === 'add') {
-    body.innerHTML = `
-      <div class="card" style="max-width:680px">
-        <div class="card-header">
-          <div>
-            <h3 class="card-title">Bitta pedagog yoki xodim qo‘shish</h3>
-            <p class="card-subtitle">Vaqtinchalik parol avtomatik generatsiya qilinadi</p>
-          </div>
-        </div>
-        <form id="nf" class="stack-v" style="gap:14px">
-          <div class="field">
-            <label for="nn">F.I.Sh. (To‘liq)</label>
-            <input id="nn" class="input" placeholder="Masalan: Karimov Anvar Jo‘rayevich" required>
-          </div>
-          <div class="grid-2">
-            <div class="field">
-              <label for="nc">Sinfi (ixtiyoriy)</label>
-              <input id="nc" class="input" placeholder="Masalan: 10-A sinf">
-            </div>
-            <div class="field">
-              <label for="ns">Fani / Lavozimi</label>
-              <input id="ns" class="input" placeholder="Masalan: Matematika">
-            </div>
-          </div>
-          <div class="grid-2">
-            <div class="field">
-              <label for="nl">Login (bo‘sh qolsa avtomatik)</label>
-              <input id="nl" class="input" placeholder="Masalan: a.karimov">
-            </div>
-            <div class="field">
-              <label for="nr">Rol</label>
-              <select id="nr" class="input">
-                ${Object.entries(ROLE).map(([r, l]) => `<option value="${r}" ${r === 'teacher' ? 'selected' : ''}>${esc(l)}</option>`).join('')}
-              </select>
-            </div>
-          </div>
-          <div>
-            <button class="btn btn-primary" type="submit" id="add-one-btn">${icon('user-plus', 15)} Qo‘shish va parol yaratish</button>
-          </div>
-        </form>
-      </div>
-    `;
-
-    $('#nf').onsubmit = async e => {
-      e.preventDefault();
-      const name = $('#nn').value.trim();
-      if (!name) return;
-      const sinf = $('#nc').value.trim();
-      const fan = $('#ns').value.trim();
-      const subjectDesc = [sinf, fan].filter(Boolean).join(' | ');
-      const login = $('#nl').value.trim().toLowerCase() || makeLogin(name, null, users);
-      const role = $('#nr').value;
-      const pw = tempPw();
-      const u = {
-        login,
-        name,
-        subject: subjectDesc,
-        role,
-        ranked: role === 'teacher' ? 1 : 0,
-        pw,
-        active: 1,
-        must_change: 1
-      };
-      const btn = $('#add-one-btn');
-      btn.disabled = true;
-      btn.textContent = 'Qo‘shilmoqda…';
-      try {
-        await api.insertUsers([u]);
-        setLastCreds([u]);
-        toast(`${name} muvaffaqiyatli qo‘shildi.`, 'success');
-        adminState.tab = 'users';
-        await ctx.refresh();
-      } catch (err) {
-        toast('Xatolik: ' + err.message, 'error');
-        btn.disabled = false;
-        btn.innerHTML = `${icon('user-plus', 15)} Qo‘shish va parol yaratish`;
-      }
-    };
-  } else {
-    // Bulk import tab
-    body.innerHTML = `
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <h3 class="card-title">Pedagoglarni ommaviy yuklash (Excel / CSV / Matn)</h3>
-            <p class="card-subtitle">Fayl brauzer xotirasida o‘qiladi, har bir pedagog uchun avtomatik login va parol yaratiladi.</p>
-          </div>
-        </div>
-
-        <div class="form-alert info" style="margin-bottom:16px">
-          ${icon('file-spreadsheet', 18)}
-          <div>
-            <b>Kiritish formati (har bir qatorda):</b> <code>F.I.Sh.; Sinf; Fan</code> (yoki <code>F.I.Sh.; Fan</code>)<br>
-            <span style="font-size:12px">Misol: <code>Karimov Anvar Jo‘rayevich; 10-A sinf; Matematika</code></span>
-          </div>
-        </div>
-
-        <div class="dropzone" id="uf-drop" style="margin-bottom:14px">
-          <input type="file" id="uf" accept=".xlsx,.csv,.txt" style="display:none">
-          <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
-            <div class="kpi-icon primary">${icon('upload-cloud', 18)}</div>
-            <div id="fn" style="font-size:13.5px;font-weight:500">Excel (.xlsx), CSV yoki TXT faylini tanlang</div>
-          </div>
-        </div>
-
-        <div class="field">
-          <label for="bt">Yoki ro‘yxat matnini joylashtiring</label>
-          <textarea id="bt" class="input" rows="6" placeholder="Karimov Anvar Jo‘rayevich; 10-A sinf; Matematika&#10;Rasulova Ziyoda Akramovna; 9-B sinf; Ingliz tili"></textarea>
-        </div>
-
-        <div style="margin-top:16px">
-          <button type="button" class="btn btn-primary" id="bb">${icon('check-circle', 16)} Bazaga kiritish va parollarni yaratish</button>
-        </div>
-      </div>
-    `;
-
-    const uf = $('#uf');
-    $('#uf-drop').onclick = () => uf.click();
-    uf.onchange = e => {
-      const f = e.target.files[0];
-      if (!f) return;
-      $('#fn').textContent = `${f.name} (${Math.round(f.size / 1024)} KB)`;
-      if (f.name.endsWith('.xlsx')) {
-        if (typeof window.XLSX === 'undefined') return toast('Excel kutubxonasi yuklanmoqda, biroz kuting…', 'warning');
-        const r = new FileReader();
-        r.onload = ev => {
-          const wb = window.XLSX.read(ev.target.result, { type: 'binary' });
-          const ws = wb.Sheets[wb.SheetNames[0]];
-          const data = window.XLSX.utils.sheet_to_json(ws, { header: 1 });
-          $('#bt').value = data.filter(row => row && row.length).map(row => row.join('; ')).join('\n');
-        };
-        r.readAsBinaryString(f);
-      } else {
-        const r = new FileReader();
-        r.onload = ev => { $('#bt').value = ev.target.result; };
-        r.readAsText(f);
-      }
-      uf.value = '';
-    };
-
-    $('#bb').onclick = async () => {
-      const val = $('#bt').value.trim();
-      if (!val) return toast('Iltimos, pedagoglar ro‘yxatini kiriting.', 'warning');
-      const lines = val.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
-      const toInsert = [];
-      const credsList = [];
-      const existingLogins = new Set(users.map(u => u.login));
-
-      for (const line of lines) {
-        const delim = line.includes(';') ? ';' : (line.includes('\t') ? '\t' : ',');
-        const parts = line.split(delim).map(p => p.trim());
-        if (!parts[0]) continue;
-        const name = parts[0];
-        const sinf = parts[1] || '';
-        const fan = parts[2] || '';
-        const subjectDesc = [sinf, fan].filter(Boolean).join(' | ');
-        const login = makeLogin(name, existingLogins, users);
-        const pw = tempPw();
-        const u = {
-          login,
-          name,
-          subject: subjectDesc,
-          role: 'teacher',
-          ranked: 1,
-          pw,
-          active: 1,
-          must_change: 1
-        };
-        toInsert.push(u);
-        credsList.push(u);
-      }
-
-      if (!toInsert.length) return toast('Yaroqli pedagog ma’lumotlari topilmadi.', 'warning');
-      const btn = $('#bb');
-      btn.disabled = true;
-      btn.textContent = `Yuklanmoqda (${toInsert.length} nafar)…`;
-      try {
-        await api.insertUsers(toInsert);
-        setLastCreds(credsList);
-        toast(`${toInsert.length} nafar pedagog muvaffaqiyatli qo‘shildi.`, 'success');
-        adminState.tab = 'users';
-        await ctx.refresh();
-      } catch (err) {
-        toast('Xatolik: ' + err.message, 'error');
-        btn.disabled = false;
-        btn.innerHTML = `${icon('check-circle', 16)} Bazaga kiritish va parollarni yaratish`;
-      }
-    };
   }
+
+  $('#adm-search').oninput = e => { adminState.search = e.target.value; drawUsers(); };
+  $('#adm-role-filter').onchange = e => { adminState.roleFilter = e.target.value; drawUsers(); };
+  drawUsers();
+}
+
+function renderAddSingleUserTab(body, ctx, isDirector) {
+  const { users, setLastCreds } = ctx;
+  body.innerHTML = `
+    <div class="card" style="max-width:660px">
+      <div class="card-header"><div><h3 class="card-title">Bitta foydalanuvchi qo‘shish</h3><p class="card-subtitle">Kriptografik xavfsiz vaqtinchalik parol generatsiya qilinadi</p></div></div>
+      <form id="nf" class="stack-v" style="gap:14px">
+        <div class="field"><label for="nn">F.I.Sh. (To‘liq)</label><input id="nn" class="input" placeholder="Masalan: Karimov Anvar Jo‘rayevich" required></div>
+        <div class="grid-2">
+          <div class="field"><label for="nc">Sinfi (ixtiyoriy)</label><input id="nc" class="input" placeholder="10-A sinf"></div>
+          <div class="field"><label for="ns">Fani / Lavozimi</label><input id="ns" class="input" placeholder="Matematika"></div>
+        </div>
+        <div class="grid-2">
+          <div class="field"><label for="nl">Login (ixtiyoriy)</label><input id="nl" class="input" placeholder="Avtomatik generatsiya"></div>
+          <div class="field">
+            <label for="nr">Rol</label>
+            <select id="nr" class="input">
+              ${Object.entries(ROLE).map(([r, l]) => `<option value="${r}" ${r === 'teacher' ? 'selected' : ''} ${r === 'director' && !isDirector ? 'disabled' : ''}>${esc(l)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div><button class="btn btn-primary" type="submit" id="add-one-btn">${icon('user-plus', 15)} Qo‘shish</button></div>
+      </form>
+    </div>
+  `;
+
+  $('#nf').onsubmit = async e => {
+    e.preventDefault();
+    const name = $('#nn').value.trim();
+    if (!name) return;
+    const subjectDesc = [$('#nc').value.trim(), $('#ns').value.trim()].filter(Boolean).join(' | ');
+    const login = $('#nl').value.trim().toLowerCase() || makeLogin(name, null, users);
+    if (users.some(u => u.login === login)) return toast(`Login "${login}" allaqachon band.`, 'warning');
+    const role = $('#nr').value;
+    const btn = $('#add-one-btn');
+    btn.disabled = true;
+    btn.textContent = 'Qo‘shilmoqda…';
+    try {
+      const created = await api.createUsers([{ login, name, subject: subjectDesc, role, ranked: role === 'teacher' ? 1 : 0 }]);
+      setLastCreds(created);
+      toast(`${name} muvaffaqiyatli qo‘shildi.`, 'success');
+      adminState.tab = 'users';
+      await ctx.refresh();
+    } catch (err) {
+      toast('Xatolik: ' + err.message, 'error');
+      btn.disabled = false;
+      btn.innerHTML = `${icon('user-plus', 15)} Qo‘shish`;
+    }
+  };
+}
+
+function renderBulkImportTab(body, ctx, setLastCreds) {
+  const { users } = ctx;
+  let parsedPreview = null;
+
+  body.innerHTML = `
+    <div class="card">
+      <div class="card-header">
+        <div><h3 class="card-title">Ommaviy import (Excel / CSV / TXT)</h3><p class="card-subtitle">Fayl brauzer xotirasida o‘qiladi, server diskiga saqlanmaydi. Yuklashdan oldin validatsiya va preview ko‘rsatiladi.</p></div>
+      </div>
+
+      <div class="form-alert info" style="margin-bottom:16px">
+        ${icon('file-spreadsheet', 18)}
+        <div><b>Format:</b> <code>F.I.Sh.; Sinf; Fan</code> (yoki <code>F.I.Sh.; Fan</code>) · Har bir qator bitta pedagog.</div>
+      </div>
+
+      <div class="dropzone" id="uf-drop" style="margin-bottom:14px">
+        <input type="file" id="uf" accept=".xlsx,.csv,.txt" style="display:none">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+          <div class="kpi-icon primary">${icon('upload-cloud', 18)}</div>
+          <div id="fn" style="font-size:13.5px;font-weight:500">Excel (.xlsx), CSV yoki TXT faylini tanlang (maks 5 MB)</div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="bt">Ro‘yxat matni</label>
+        <textarea id="bt" class="input" rows="5" placeholder="Karimov Anvar Jo‘rayevich; 10-A sinf; Matematika&#10;Rasulova Ziyoda Akramovna; 9-B sinf; Ingliz tili"></textarea>
+      </div>
+
+      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+        <button type="button" class="btn btn-secondary" id="imp-preview-btn">${icon('eye', 15)} Tekshirish va Preview</button>
+        <button type="button" class="btn btn-primary" id="imp-run-btn" style="display:none">${icon('check-circle', 15)} Importni tasdiqlash</button>
+      </div>
+
+      <div id="imp-preview-zone" style="margin-top:16px"></div>
+    </div>
+  `;
+
+  const uf = $('#uf');
+  $('#uf-drop').onclick = () => uf.click();
+  uf.onchange = e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    if (f.size > 5 * 1024 * 1024) return toast('Import fayli 5 MB dan oshmasligi kerak.', 'error');
+    $('#fn').textContent = `${f.name} (${Math.round(f.size / 1024)} KB)`;
+    if (f.name.endsWith('.xlsx')) {
+      if (typeof window.XLSX === 'undefined') return toast('Excel kutubxonasi yuklanmoqda, biroz kuting…', 'warning');
+      const r = new FileReader();
+      r.onload = ev => {
+        const wb = window.XLSX.read(ev.target.result, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data = window.XLSX.utils.sheet_to_json(ws, { header: 1 });
+        $('#bt').value = data.filter(row => row && row.length).map(row => row.join('; ')).join('\n');
+        validateAndPreview();
+      };
+      r.readAsBinaryString(f);
+    } else {
+      const r = new FileReader();
+      r.onload = ev => { $('#bt').value = ev.target.result; validateAndPreview(); };
+      r.readAsText(f);
+    }
+    uf.value = '';
+  };
+
+  function validateAndPreview() {
+    const val = $('#bt').value.trim();
+    const zone = $('#imp-preview-zone');
+    const runBtn = $('#imp-run-btn');
+    if (!val) {
+      zone.innerHTML = '';
+      runBtn.style.display = 'none';
+      parsedPreview = null;
+      return;
+    }
+
+    const lines = val.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+    const existingLogins = new Set(users.map(u => u.login));
+    const existingNames = new Set(users.map(u => u.name.trim().toLowerCase()));
+    const valid = [];
+    const errors = [];
+
+    lines.forEach((line, idx) => {
+      const delim = line.includes(';') ? ';' : (line.includes('\t') ? '\t' : ',');
+      const parts = line.split(delim).map(p => p.trim());
+      const name = parts[0] || '';
+      if (name.length < 3) {
+        errors.push({ line: idx + 1, raw: line, reason: 'Ism bo‘sh yoki juda qisqa' });
+        return;
+      }
+      const sinf = parts[1] || '';
+      const fan = parts[2] || '';
+      const subjectDesc = [sinf, fan].filter(Boolean).join(' | ');
+      const dupName = existingNames.has(name.toLowerCase());
+      const login = makeLogin(name, existingLogins, users);
+      valid.push({ login, name, subject: subjectDesc, role: 'teacher', ranked: 1, dupName });
+    });
+
+    parsedPreview = valid;
+    runBtn.style.display = valid.length > 0 ? 'inline-flex' : 'none';
+    runBtn.textContent = `Importni tasdiqlash (${valid.length} nafar)`;
+
+    zone.innerHTML = `
+      <div style="display:flex;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+        <span class="badge badge-success">Yaroqli: ${valid.length} ta</span>
+        ${errors.length ? `<span class="badge badge-error">Xato qatorlar: ${errors.length} ta</span>` : ''}
+      </div>
+      ${errors.length ? `<div class="form-alert error" style="margin-bottom:10px">${icon('alert-circle', 16)}<div>${errors.slice(0, 5).map(e => `<div>Qator ${e.line}: ${esc(e.reason)} (<code>${esc(e.raw)}</code>)</div>`).join('')}</div></div>` : ''}
+      ${valid.length ? `<div class="table-wrap" style="max-height:240px;overflow-y:auto">
+        <table class="data-table">
+          <thead><tr><th>#</th><th>F.I.Sh.</th><th>Avtomatik login</th><th>Sinf / Fan</th><th>Eslatma</th></tr></thead>
+          <tbody>
+            ${valid.map((v, i) => `<tr><td>${i + 1}</td><td><b>${esc(v.name)}</b></td><td><code>${esc(v.login)}</code></td><td>${esc(v.subject || '—')}</td><td>${v.dupName ? '<span class="badge badge-warning">O‘xshash ism mavjud</span>' : '<span class="badge badge-success">Tayyor</span>'}</td></tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : ''}
+    `;
+  }
+
+  $('#imp-preview-btn').onclick = validateAndPreview;
+
+  $('#imp-run-btn').onclick = async () => {
+    if (!parsedPreview || !parsedPreview.length) return;
+    const btn = $('#imp-run-btn');
+    btn.disabled = true;
+    btn.textContent = `Bazaga kiritilmoqda (${parsedPreview.length} nafar)…`;
+    try {
+      const created = await api.createUsers(parsedPreview.map(({ dupName, ...u }) => u));
+      setLastCreds(created);
+      toast(`${created.length} nafar pedagog muvaffaqiyatli yuklandi.`, 'success');
+      adminState.tab = 'users';
+      await ctx.refresh();
+    } catch (err) {
+      toast('Import xatosi: ' + err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = `Importni tasdiqlash (${parsedPreview.length} nafar)`;
+    }
+  };
 }
 
 /* ==========================================================================
-   HISOBOTLAR (Reports & Official Exports)
+   REPORT CENTER (Role-Scoped, Date Range, Formula-Safe CSV, A4 Print)
    ========================================================================== */
 export function renderReports(el, ctx) {
-  const { users, entries } = ctx;
+  const { me, users, entries } = ctx;
+  const isStaff = ['director', 'reviewer'].includes(me.role);
   const ranking = getRanking(users, entries);
-  const approvedEntries = entries.filter(e => e.status === 'approved');
 
-  function exportDetailedEntriesCSV() {
-    const rows = approvedEntries.map(e => {
-      const u = users.find(x => x.id === e.uid);
-      const ind = IMAP[e.ind];
-      return [e.date, u?.name || '', u?.subject || '', `${e.ind}. ${ind?.name || ''}`, e.type, e.qty, e.pts, e.descr].map(csvCell).join(';');
-    });
-    const b = new Blob(['\ufeffSana;Pedagog;Fan;Mezon;Turi;Soni;Ball;Tavsif\n' + rows.join('\n')], {
-      type: 'text/csv;charset=utf-8'
-    });
+  const inRange = e => {
+    if (reportState.startDate && e.date < reportState.startDate) return false;
+    if (reportState.endDate && e.date > reportState.endDate) return false;
+    return true;
+  };
+
+  const rangedEntries = entries.filter(inRange);
+  const approvedEntries = rangedEntries.filter(e => e.status === 'approved');
+  const rejectedEntries = rangedEntries.filter(e => e.status === 'rejected');
+
+  function downloadCsv(filename, header, rows) {
+    const body = rows.map(r => r.map(csvCell).join(';')).join('\n');
+    const b = new Blob(['\ufeff' + header + '\n' + body], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(b);
-    a.download = 'pedagoglar_yutuqlar_hisoboti.csv';
+    a.download = filename;
     a.click();
-    toast('Tasdiqlangan yutuqlar hisoboti yuklab olindi.', 'success');
+    toast(`${filename} yuklab olindi.`, 'success');
   }
 
   el.innerHTML = `
     <div class="stack-v">
       <div class="page-header">
         <div>
-          <h1 class="page-title">Hisobotlar va eksport</h1>
-          <p class="page-desc">26-AF buyruq asosida ustama belgilash va rasmiy A4 portfoliolar.</p>
+          <h1 class="page-title">Hisobotlar markazi</h1>
+          <p class="page-desc">Generatsiya sanasi: ${new Date().toLocaleDateString('uz-UZ')} · Barcha CSV fayllar Excel UTF-8 va formula-himoyasi bilan.</p>
         </div>
       </div>
 
-      <div class="grid-2">
-        <div class="card" style="display:flex;flex-direction:column;justify-content:space-between;gap:16px">
-          <div>
-            <div class="kpi-icon primary" style="margin-bottom:12px">${icon('file-spreadsheet', 18)}</div>
-            <h3 class="card-title">Oylik reyting va ustama hisoboti</h3>
-            <p class="card-subtitle" style="margin-top:6px">
-              Barcha faol pedagoglarning A, B, C bo‘limlari va umumiy reyting ballari jamlangan rasmiy CSV/Excel jadvali.
-            </p>
+      <div class="card card-compact">
+        <div class="filter-bar" style="margin-bottom:0">
+          <div class="filter-controls">
+            <span style="font-size:13px;font-weight:500;color:var(--text-2)">Yutuqlar sanasi oralig‘i:</span>
+            <input id="rep-start" type="date" class="input" value="${esc(reportState.startDate)}" style="width:auto" aria-label="Boshlanish sanasi">
+            <span style="color:var(--text-muted)">—</span>
+            <input id="rep-end" type="date" class="input" value="${esc(reportState.endDate)}" style="width:auto" aria-label="Tugash sanasi">
+            ${(reportState.startDate || reportState.endDate) ? '<button type="button" class="btn btn-ghost btn-sm" id="rep-clear">Tozalash</button>' : ''}
           </div>
+          <span style="font-size:12.5px;color:var(--text-muted)">Oraliqdagi yutuqlar: <b>${rangedEntries.length}</b> ta</span>
+        </div>
+      </div>
+
+      <div class="grid-3">
+        <div class="card card-compact" style="display:flex;flex-direction:column;justify-content:space-between;gap:14px">
           <div>
-            <button type="button" class="btn btn-primary" id="rep-rank-csv">${icon('download', 15)} Reyting jadvalini yuklab olish (CSV)</button>
+            <div class="kpi-icon primary" style="margin-bottom:10px">${icon('trophy', 17)}</div>
+            <h3 class="card-title">Umumiy reyting hisoboti</h3>
+            <p class="card-subtitle" style="margin-top:4px">${ranking.length} nafar pedagogning A, B, C va jami ballari.</p>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" id="rep-rk-btn">${icon('download', 14)} Yuklab olish (CSV)</button>
+        </div>
+
+        <div class="card card-compact" style="display:flex;flex-direction:column;justify-content:space-between;gap:14px">
+          <div>
+            <div class="kpi-icon success" style="margin-bottom:10px">${icon('check-circle', 17)}</div>
+            <h3 class="card-title">Tasdiqlangan natijalar</h3>
+            <p class="card-subtitle" style="margin-top:4px">Oraliqdagi ${approvedEntries.length} ta tasdiqlangan yutuq reestri.</p>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" id="rep-app-btn">${icon('download', 14)} Yuklab olish (CSV)</button>
+        </div>
+
+        <div class="card card-compact" style="display:flex;flex-direction:column;justify-content:space-between;gap:14px">
+          <div>
+            <div class="kpi-icon" style="margin-bottom:10px">${icon('bar-chart-3', 17)}</div>
+            <h3 class="card-title">Fanlar va indikatorlar</h3>
+            <p class="card-subtitle" style="margin-top:4px">Fan kafedralari va 15 mezon kesimidagi jamlanma.</p>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button type="button" class="btn btn-secondary btn-sm" id="rep-subj-btn">${icon('download', 14)} Fanlar</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="rep-ind-btn">${icon('download', 14)} Mezonlar</button>
           </div>
         </div>
 
-        <div class="card" style="display:flex;flex-direction:column;justify-content:space-between;gap:16px">
-          <div>
-            <div class="kpi-icon success" style="margin-bottom:12px">${icon('file-text', 18)}</div>
-            <h3 class="card-title">Tasdiqlangan yutuqlar reestri</h3>
-            <p class="card-subtitle" style="margin-top:6px">
-              Tasdiqlangan ${approvedEntries.length} ta yutuqning batafsil ro‘yxati, sanalari va ballari kesimida eksport.
-            </p>
+        ${isStaff ? `
+          <div class="card card-compact" style="display:flex;flex-direction:column;justify-content:space-between;gap:14px">
+            <div>
+              <div class="kpi-icon error" style="margin-bottom:10px">${icon('x-circle', 17)}</div>
+              <h3 class="card-title">Rad etilgan natijalar</h3>
+              <p class="card-subtitle" style="margin-top:4px">${rejectedEntries.length} ta rad etilgan ariza va sabablar.</p>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" id="rep-rej-btn">${icon('download', 14)} Yuklab olish (CSV)</button>
           </div>
-          <div>
-            <button type="button" class="btn btn-secondary" id="rep-entries-csv">${icon('download', 15)} Yutuqlar reestrini yuklab olish (CSV)</button>
-          </div>
-        </div>
+        ` : ''}
       </div>
 
       <div class="card">
-        <div class="card-header">
-          <div>
-            <h3 class="card-title">Pedagoglarning A4 portfoliolari</h3>
-            <p class="card-subtitle">Istalgan pedagogning rasmiy portfoliosini ochish va PDF formatda chop etish</p>
-          </div>
-        </div>
+        <div class="card-header"><div><h3 class="card-title">Pedagoglarning rasmiy A4 portfoliolari</h3><p class="card-subtitle">Chop etish yoki PDF saqlash uchun istalgan pedagogni tanlang</p></div></div>
         ${ranking.length === 0
           ? emptyStateHtml({ iconName: 'file-text', title: 'Ma’lumotlar mavjud emas', desc: 'Reytingda faol pedagoglar bo‘lgach portfoliolar shu yerda ko‘rinadi.' })
-          : `
-            <div class="table-wrap">
+          : `<div class="table-wrap">
               <table class="data-table">
-                <thead>
-                  <tr><th>O‘rin</th><th>Pedagog</th><th>Fan / Sinf</th><th>Jami ball</th><th style="text-align:right">Portfolio</th></tr>
-                </thead>
+                <thead><tr><th>O‘rin</th><th>Pedagog</th><th>Fan / Sinf</th><th>Jami ball</th><th style="text-align:right">Portfolio</th></tr></thead>
                 <tbody>
                   ${ranking.map(r => `
                     <tr>
@@ -641,80 +735,104 @@ export function renderReports(el, ctx) {
                       <td><b>${esc(r.name)}</b></td>
                       <td style="color:var(--text-muted)">${esc(r.subject)}</td>
                       <td><b style="color:var(--primary)">${r.T} ball</b></td>
-                      <td style="text-align:right">
-                        <button type="button" class="btn btn-secondary btn-sm" data-rep-port="${r.id}">${icon('printer', 14)} A4 Portfolio</button>
-                      </td>
+                      <td style="text-align:right"><button type="button" class="btn btn-secondary btn-sm" data-rep-port="${r.id}">${icon('printer', 14)} A4 Portfolio</button></td>
                     </tr>
                   `).join('')}
                 </tbody>
               </table>
-            </div>
-          `}
+            </div>`}
       </div>
     </div>
   `;
 
-  $('#rep-rank-csv').onclick = () => exportRankingCSV(ranking);
-  $('#rep-entries-csv').onclick = exportDetailedEntriesCSV;
-  $$('[data-rep-port]').forEach(btn => {
-    btn.onclick = () => ctx.openPortfolioPrint(Number(btn.dataset.repPort));
-  });
+  $('#rep-start').onchange = e => { reportState.startDate = e.target.value; renderReports(el, ctx); };
+  $('#rep-end').onchange = e => { reportState.endDate = e.target.value; renderReports(el, ctx); };
+  const cl = $('#rep-clear');
+  if (cl) cl.onclick = () => { reportState = { startDate: '', endDate: '' }; renderReports(el, ctx); };
+
+  $('#rep-rk-btn').onclick = () => exportRankingCSV(ranking.map(r => ({ ...r, globalRank: r.rank })), 'Umumiy');
+
+  $('#rep-app-btn').onclick = () => downloadCsv(
+    'tasdiqlangan_yutuqlar.csv',
+    'Sana;Pedagog;Fan;Mezon;Turi;Soni;Ball;Tavsif',
+    approvedEntries.map(e => {
+      const u = users.find(x => x.id === e.uid);
+      return [e.date, u?.name || '', u?.subject || '', `${e.ind}. ${IMAP[e.ind]?.name || ''}`, e.type, e.qty, e.pts, e.descr];
+    })
+  );
+
+  $('#rep-subj-btn').onclick = () => {
+    const map = {};
+    ranking.forEach(r => {
+      const s = extractSubjectLabel(r.subject);
+      if (!map[s]) map[s] = { s, n: 0, t: 0, a: 0, b: 0, c: 0 };
+      map[s].n++; map[s].t += r.T; map[s].a += r.A; map[s].b += r.B; map[s].c += r.C;
+    });
+    downloadCsv(
+      'fanlar_hisoboti.csv',
+      'Fan;Pedagoglar soni;O‘rtacha A;O‘rtacha B;O‘rtacha C;O‘rtacha Jami',
+      Object.values(map).map(m => [m.s, m.n, (m.a / m.n).toFixed(1), (m.b / m.n).toFixed(1), (m.c / m.n).toFixed(1), (m.t / m.n).toFixed(1)])
+    );
+  };
+
+  $('#rep-ind-btn').onclick = () => {
+    downloadCsv(
+      'indikatorlar_hisoboti.csv',
+      'Indikator;Bo‘lim;Maksimal ball;Tasdiqlangan arizalar;Jami ball',
+      IND.map(i => {
+        const list = approvedEntries.filter(e => e.ind === i.id);
+        return [`${i.id}. ${i.name}`, SEC[i.sec][0], i.max, list.length, list.reduce((s, e) => s + Number(e.pts || 0), 0)];
+      })
+    );
+  };
+
+  const rejBtn = $('#rep-rej-btn');
+  if (rejBtn) {
+    rejBtn.onclick = () => downloadCsv(
+      'rad_etilgan_arizalar.csv',
+      'Sana;Pedagog;Mezon;Turi;Izoh',
+      rejectedEntries.map(e => {
+        const u = users.find(x => x.id === e.uid);
+        return [e.date, u?.name || '', `${e.ind}. ${IMAP[e.ind]?.name || ''}`, e.type, e.note || ''];
+      })
+    );
+  }
+
+  $$('[data-rep-port]').forEach(b => { b.onclick = () => ctx.openPortfolioPrint(Number(b.dataset.repPort)); });
 }
 
 /* ==========================================================================
-   SOZLAMALAR (Theme, Password, Account Preferences)
+   SETTINGS
    ========================================================================== */
 export function renderSettings(el, ctx) {
   const { me } = ctx;
   const pref = getThemePref();
 
   el.innerHTML = `
-    <div class="stack-v" style="max-width:780px">
+    <div class="stack-v" style="max-width:760px">
       <div class="page-header">
         <div>
           <h1 class="page-title">Sozlamalar</h1>
-          <p class="page-desc">Interfeys mavzusi, xavfsizlik va shaxsiy hisob parametrlari.</p>
+          <p class="page-desc">Interfeys mavzusi, sessiya ma’lumotlari va xavfsizlik.</p>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-header">
-          <div>
-            <h3 class="card-title">Ko‘rinish va mavzu</h3>
-            <p class="card-subtitle">Yorug‘, qorong‘i yoki tizim sozlamasiga moslashuvchi rejimni tanlang</p>
-          </div>
-        </div>
+        <div class="card-header"><div><h3 class="card-title">Mavzu (Theme)</h3><p class="card-subtitle">Yorug‘, qorong‘i yoki tizim sozlamasiga mos rejim</p></div></div>
         <div class="tabs-pill">
-          <button type="button" class="tab-btn ${pref === 'light' ? 'active' : ''}" data-theme-pref="light">${icon('sun', 15)} Yorug‘</button>
-          <button type="button" class="tab-btn ${pref === 'dark' ? 'active' : ''}" data-theme-pref="dark">${icon('moon', 15)} Qorong‘i</button>
-          <button type="button" class="tab-btn ${pref === 'system' ? 'active' : ''}" data-theme-pref="system">${icon('monitor', 15)} Tizim bo‘yicha</button>
+          <button type="button" class="tab-btn ${pref === 'light' ? 'active' : ''}" data-theme-pref="light">${icon('sun', 14)} Yorug‘</button>
+          <button type="button" class="tab-btn ${pref === 'dark' ? 'active' : ''}" data-theme-pref="dark">${icon('moon', 14)} Qorong‘i</button>
+          <button type="button" class="tab-btn ${pref === 'system' ? 'active' : ''}" data-theme-pref="system">${icon('monitor', 14)} Tizim bo‘yicha</button>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-header">
-          <div>
-            <h3 class="card-title">Xavfsizlik va hisob ma’lumotlari</h3>
-            <p class="card-subtitle">Tizimga kirish ma’lumotlari va parol boshqaruvi</p>
-          </div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:12px;font-size:13.5px;margin-bottom:18px">
-          <div style="display:flex;justify-content:space-between;padding:10px 12px;border-radius:8px;background:var(--bg-subtle)">
-            <span style="color:var(--text-muted)">F.I.Sh.</span>
-            <b>${esc(me.name)}</b>
-          </div>
-          <div style="display:flex;justify-content:space-between;padding:10px 12px;border-radius:8px;background:var(--bg-subtle)">
-            <span style="color:var(--text-muted)">Login</span>
-            <code>${esc(me.login)}</code>
-          </div>
-          <div style="display:flex;justify-content:space-between;padding:10px 12px;border-radius:8px;background:var(--bg-subtle)">
-            <span style="color:var(--text-muted)">Rol</span>
-            <b>${esc(ROLE[me.role] || me.role)}</b>
-          </div>
-          <div style="display:flex;justify-content:space-between;padding:10px 12px;border-radius:8px;background:var(--bg-subtle)">
-            <span style="color:var(--text-muted)">Fan / Lavozim</span>
-            <b>${esc(me.subject || '—')}</b>
-          </div>
+        <div class="card-header"><div><h3 class="card-title">Hisob va xavfsizlik</h3><p class="card-subtitle">Shaxsiy ma’lumotlar va sessiya holati</p></div></div>
+        <div style="display:flex;flex-direction:column;gap:10px;font-size:13.5px;margin-bottom:18px">
+          <div style="display:flex;justify-content:space-between;padding:10px 12px;border-radius:8px;background:var(--bg-subtle)"><span style="color:var(--text-muted)">F.I.Sh.</span><b>${esc(me.name)}</b></div>
+          <div style="display:flex;justify-content:space-between;padding:10px 12px;border-radius:8px;background:var(--bg-subtle)"><span style="color:var(--text-muted)">Login</span><code>${esc(me.login)}</code></div>
+          <div style="display:flex;justify-content:space-between;padding:10px 12px;border-radius:8px;background:var(--bg-subtle)"><span style="color:var(--text-muted)">Rol</span><b>${esc(ROLE[me.role] || me.role)}</b></div>
+          <div style="display:flex;justify-content:space-between;padding:10px 12px;border-radius:8px;background:var(--bg-subtle)"><span style="color:var(--text-muted)">Autentifikatsiya rejimi</span><span class="badge ${isV4SecurityActive() ? 'badge-success' : 'badge-warning'}">${isV4SecurityActive() ? 'V4 Server Session' : 'Standart RPC'}</span></div>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <button type="button" class="btn btn-primary" id="set-pw-btn">${icon('key', 15)} Parolni almashtirish</button>
@@ -727,11 +845,10 @@ export function renderSettings(el, ctx) {
   $$('[data-theme-pref]').forEach(btn => {
     btn.onclick = () => {
       applyTheme(btn.dataset.themePref);
-      toast('Interfeys mavzusi yangilandi.', 'success');
+      toast('Mavzu yangilandi.', 'success');
       ctx.navigate('settings');
     };
   });
-
   $('#set-pw-btn').onclick = () => ctx.openPasswordModal();
   $('#set-logout-btn').onclick = () => ctx.logout();
 }

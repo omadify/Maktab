@@ -1,12 +1,13 @@
-// Main Application Orchestrator: State, RBAC Router, Collapsible Sidebar, Topbar, Offline Handling
+// Application Orchestrator V4.0: RBAC Router, Collapsible Shell, Single-Tab Heartbeat, Session Expiry & Notification Center
 import { ROLE, IMAP } from './js/config.js';
-import { api, saveSession, loadSession } from './js/api.js';
+import { api, saveSession, loadSession, isV4SecurityActive } from './js/api.js';
 import { icon } from './js/icons.js';
 import {
   $,
   $$,
   esc,
   toast,
+  confirmDialog,
   applyTheme,
   resolveTheme,
   initThemeListener,
@@ -15,28 +16,36 @@ import {
   animateCounters
 } from './js/ui.js';
 import { renderLogin, renderPasswordChange } from './js/views/auth.js';
-import { buildNotifications, openGlobalSearch } from './js/command.js';
+import { buildNotifications, markLocalNotifRead, openGlobalSearch } from './js/command.js';
 import { renderDashboard, renderMyResults, renderAnalytics } from './js/views/dashboard.js';
 import { renderRanking } from './js/views/ranking.js';
 import { renderTeachersDirectory, renderProfile, renderPortfolioPrint } from './js/views/profile.js';
 import { renderAddEntry, renderReviews, renderCriteria } from './js/views/entries.js';
 import { renderAdmin, renderReports, renderSettings } from './js/views/admin.js';
+import { renderMonitoring } from './js/views/monitoring.js';
 
 const STATE = {
   users: [],
   entries: [],
+  monitoring: { available: false, activities: [], logins: [], presence: [] },
+  serverNotifications: [],
   loading: false,
   syncError: null,
   lastSync: null
 };
 
 let ME = null;
+let SESSION_EXPIRES_AT = null;
 let CUR_ROUTE = 'dashboard';
 let ROUTE_PARAMS = {};
 let SIDEBAR_COLLAPSED = localStorage.getItem('reyting_sidebar_collapsed') === '1';
 let MOBILE_DRAWER_OPEN = false;
 let IS_OFFLINE = !navigator.onLine;
 let LAST_CREDS = [];
+let DIRTY_FORM = false;
+let LAST_RENDERED_ROUTE = null;
+let HEARTBEAT_TIMER = null;
+let EXPIRY_WARNED = false;
 
 const ROUTE_TITLES = {
   dashboard: 'Boshqaruv paneli',
@@ -46,11 +55,14 @@ const ROUTE_TITLES = {
   teachers: 'Pedagoglar',
   profile: 'Pedagog profili',
   portfolio_print: 'A4 Portfolio',
-  reviews: 'Baholash va tasdiqlash',
+  reviews: 'Tasdiqlash markazi',
   criteria: 'Baholash mezonlari',
-  analytics: 'Statistika va tahlil',
+  analytics: 'Statistika',
   reports: 'Hisobotlar',
-  admin: 'Administrator paneli',
+  admin: 'Foydalanuvchilar',
+  monitoring: 'So‘nggi harakatlar',
+  login_history: 'Kirishlar tarixi',
+  presence: 'Faol foydalanuvchilar',
   settings: 'Sozlamalar'
 };
 
@@ -60,10 +72,7 @@ function getNavSections() {
   const pendingReviewCount = STATE.entries.filter(e => {
     if (e.status !== 'pending') return false;
     if (role === 'director') return true;
-    if (role === 'reviewer') {
-      const ind = IMAP[e.ind];
-      return ind && ind.resp.includes(ME.name);
-    }
+    if (role === 'reviewer') return Boolean(IMAP[e.ind]?.resp.includes(ME.name));
     return false;
   }).length;
 
@@ -81,7 +90,7 @@ function getNavSections() {
     sections.push({
       title: 'Baholash',
       items: [
-        { id: 'reviews', label: 'Tasdiqlash navbati', icon: 'check-circle', badge: pendingReviewCount },
+        { id: 'reviews', label: 'Tasdiqlash markazi', icon: 'check-circle', badge: pendingReviewCount },
         { id: 'criteria', label: 'Baholash mezonlari', icon: 'book-open' }
       ]
     });
@@ -90,12 +99,20 @@ function getNavSections() {
       items: [
         { id: 'analytics', label: 'Statistika', icon: 'bar-chart-3' },
         { id: 'reports', label: 'Hisobotlar', icon: 'file-text' },
-        { id: 'admin', label: 'Boshqaruv (Admin)', icon: 'shield' }
+        { id: 'admin', label: 'Foydalanuvchilar', icon: 'shield' }
+      ]
+    });
+    sections.push({
+      title: 'Monitoring',
+      items: [
+        { id: 'monitoring', label: 'So‘nggi harakatlar', icon: 'activity' },
+        { id: 'login_history', label: 'Kirishlar tarixi', icon: 'history' },
+        { id: 'presence', label: 'Faol sessiyalar', icon: 'radio' }
       ]
     });
   } else if (role === 'it_admin') {
     sections.push({
-      title: 'Asosiy',
+      title: 'Texnik boshqaruv',
       items: [
         { id: 'dashboard', label: 'Boshqaruv paneli', icon: 'layout-dashboard' },
         { id: 'admin', label: 'Pedagoglar va import', icon: 'users' },
@@ -104,10 +121,13 @@ function getNavSections() {
       ]
     });
     sections.push({
-      title: 'Ma’lumotnoma',
+      title: 'Ma’lumotnoma va monitoring',
       items: [
         { id: 'criteria', label: 'Baholash mezonlari', icon: 'book-open' },
-        { id: 'reports', label: 'Hisobotlar', icon: 'file-text' }
+        { id: 'reports', label: 'Hisobotlar', icon: 'file-text' },
+        { id: 'monitoring', label: 'So‘nggi harakatlar', icon: 'activity' },
+        { id: 'login_history', label: 'Kirishlar tarixi', icon: 'history' },
+        { id: 'presence', label: 'Faol foydalanuvchilar', icon: 'radio' }
       ]
     });
   } else if (role === 'reviewer') {
@@ -115,7 +135,7 @@ function getNavSections() {
       title: 'Asosiy',
       items: [
         { id: 'dashboard', label: 'Boshqaruv paneli', icon: 'layout-dashboard' },
-        { id: 'reviews', label: 'Tasdiqlash', icon: 'check-circle', badge: pendingReviewCount },
+        { id: 'reviews', label: 'Tasdiqlash navbati', icon: 'check-circle', badge: pendingReviewCount },
         { id: 'my_results', label: 'Mening natijam', icon: 'award' },
         { id: 'ranking', label: 'Reyting jadvali', icon: 'trophy' }
       ]
@@ -136,7 +156,6 @@ function getNavSections() {
       ]
     });
   } else {
-    // Teacher
     sections.push({
       title: 'Asosiy',
       items: [
@@ -149,7 +168,7 @@ function getNavSections() {
       title: 'Faoliyat',
       items: [
         { id: 'add_entry', label: 'Yutuq qo‘shish', icon: 'plus' },
-        { id: 'profile', label: 'Shaxsiy profil va portfolio', icon: 'user' },
+        { id: 'profile', label: 'Profil va portfolio', icon: 'user' },
         { id: 'criteria', label: 'Baholash mezonlari', icon: 'book-open' }
       ]
     });
@@ -157,9 +176,7 @@ function getNavSections() {
 
   sections.push({
     title: 'Tizim',
-    items: [
-      { id: 'settings', label: 'Sozlamalar', icon: 'settings' }
-    ]
+    items: [{ id: 'settings', label: 'Sozlamalar', icon: 'settings' }]
   });
 
   return sections;
@@ -167,10 +184,10 @@ function getNavSections() {
 
 function getAllowedRoutes(role) {
   if (role === 'director') {
-    return ['dashboard', 'reviews', 'ranking', 'teachers', 'criteria', 'analytics', 'reports', 'admin', 'profile', 'portfolio_print', 'settings'];
+    return ['dashboard', 'reviews', 'ranking', 'teachers', 'criteria', 'analytics', 'reports', 'admin', 'monitoring', 'login_history', 'presence', 'profile', 'portfolio_print', 'settings'];
   }
   if (role === 'it_admin') {
-    return ['dashboard', 'admin', 'teachers', 'ranking', 'criteria', 'reports', 'profile', 'portfolio_print', 'settings'];
+    return ['dashboard', 'admin', 'teachers', 'ranking', 'criteria', 'reports', 'monitoring', 'login_history', 'presence', 'profile', 'portfolio_print', 'settings'];
   }
   if (role === 'reviewer') {
     return ['dashboard', 'reviews', 'my_results', 'add_entry', 'ranking', 'teachers', 'criteria', 'analytics', 'reports', 'profile', 'portfolio_print', 'settings'];
@@ -178,27 +195,84 @@ function getAllowedRoutes(role) {
   return ['dashboard', 'my_results', 'add_entry', 'ranking', 'criteria', 'profile', 'portfolio_print', 'settings'];
 }
 
+function startHeartbeat() {
+  stopHeartbeat();
+  if (!ME || !isV4SecurityActive()) return;
+  const beat = () => {
+    if (!ME || document.visibilityState !== 'visible') return;
+    // Deduplicate heartbeat across multiple browser tabs via localStorage timestamp
+    const now = Date.now();
+    const lastBeat = Number(localStorage.getItem('reyting_last_beat') || 0);
+    if (now - lastBeat < 40000) return;
+    localStorage.setItem('reyting_last_beat', String(now));
+    api.heartbeatPresence();
+
+    // Check session expiry warning (<= 10 minutes remaining)
+    if (SESSION_EXPIRES_AT && !EXPIRY_WARNED) {
+      const remMs = new Date(SESSION_EXPIRES_AT).getTime() - now;
+      if (remMs > 0 && remMs <= 10 * 60 * 1000) {
+        EXPIRY_WARNED = true;
+        toast('Sessiya muddati 10 daqiqadan kam qoldi. Muhim o‘zgarishlarni saqlang.', 'warning', 7000);
+      } else if (remMs <= 0) {
+        toast('Sessiya muddati tugadi. Qayta kiring.', 'warning');
+        handleLogout();
+      }
+    }
+  };
+  HEARTBEAT_TIMER = setInterval(beat, 50000);
+}
+
+function stopHeartbeat() {
+  if (HEARTBEAT_TIMER) {
+    clearInterval(HEARTBEAT_TIMER);
+    HEARTBEAT_TIMER = null;
+  }
+}
+
+async function handleLogout() {
+  stopHeartbeat();
+  DIRTY_FORM = false;
+  await api.logout();
+  ME = null;
+  SESSION_EXPIRES_AT = null;
+  CUR_ROUTE = 'dashboard';
+  ROUTE_PARAMS = {};
+  LAST_CREDS = [];
+  STATE.users = [];
+  STATE.entries = [];
+  STATE.monitoring = { available: false, activities: [], logins: [], presence: [] };
+  STATE.serverNotifications = [];
+  render();
+}
+
 async function syncData(showToastOnError = false) {
+  if (!ME) return;
   STATE.loading = true;
   STATE.syncError = null;
   try {
-    const [u, e] = await Promise.all([api.getUsers(), api.getEntries()]);
-    STATE.users = u || [];
-    STATE.entries = e || [];
+    const ws = await api.fetchWorkspaceData();
+    STATE.users = ws.users || [];
+    STATE.entries = ws.entries || [];
     STATE.lastSync = new Date();
-    if (ME) {
-      const fresh = STATE.users.find(x => x.id === ME.id);
-      if (fresh) {
-        if (!fresh.active) {
-          ME = null;
-          saveSession(null);
-          toast('Hisobingiz faolsizlashtirilgan.', 'warning');
-          return;
-        }
-        ME = fresh;
-        saveSession(ME);
+
+    const serverMe = ws.me || STATE.users.find(x => x.id === ME.id);
+    if (serverMe) {
+      if (!serverMe.active) {
+        toast('Hisobingiz faolsizlashtirilgan.', 'warning');
+        await handleLogout();
+        return;
       }
+      ME = serverMe;
+      saveSession(ME);
     }
+
+    if (['director', 'it_admin'].includes(ME.role) && isV4SecurityActive()) {
+      STATE.monitoring = await api.fetchMonitoringData(150);
+    }
+    if (isV4SecurityActive()) {
+      STATE.serverNotifications = await api.fetchNotifications();
+    }
+    startHeartbeat();
   } catch (err) {
     STATE.syncError = err.message || 'Ma’lumotlarni yuklashda xatolik yuz berdi.';
     if (showToastOnError) toast(STATE.syncError, 'error');
@@ -208,37 +282,62 @@ async function syncData(showToastOnError = false) {
 }
 
 function getContext() {
+  const navPages = getNavSections().flatMap(s => s.items);
+  const tryLeave = async nextFn => {
+    if (DIRTY_FORM && CUR_ROUTE === 'add_entry') {
+      const ok = await confirmDialog({
+        title: 'Saqlanmagan ma’lumotlar',
+        message: 'Kiritilgan ma’lumotlar hali yuborilmadi. Sahifadan chiqishni xohlaysizmi?',
+        confirmText: 'Chiqish',
+        cancelText: 'Qolish'
+      });
+      if (!ok) return;
+      DIRTY_FORM = false;
+    }
+    nextFn();
+  };
+
   return {
     me: ME,
     users: STATE.users,
     entries: STATE.entries,
-    loading: STATE.loading,
-    syncError: STATE.syncError,
+    monitoring: STATE.monitoring,
+    serverNotifications: STATE.serverNotifications,
+    lastSync: STATE.lastSync,
     route: CUR_ROUTE,
     params: ROUTE_PARAMS,
+    navPages,
     lastCreds: LAST_CREDS,
     setLastCreds: creds => { LAST_CREDS = creds; },
+    setDirtyForm: flag => { DIRTY_FORM = Boolean(flag); },
     navigate: (route, params = {}) => {
-      const allowed = getAllowedRoutes(ME?.role);
-      CUR_ROUTE = allowed.includes(route) ? route : 'dashboard';
-      ROUTE_PARAMS = params;
-      MOBILE_DRAWER_OPEN = false;
-      render();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (route === CUR_ROUTE && JSON.stringify(params) === JSON.stringify(ROUTE_PARAMS)) return;
+      tryLeave(() => {
+        const allowed = getAllowedRoutes(ME?.role);
+        CUR_ROUTE = allowed.includes(route) ? route : 'dashboard';
+        ROUTE_PARAMS = params;
+        MOBILE_DRAWER_OPEN = false;
+        render();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
     },
     openProfile: uid => {
-      CUR_ROUTE = 'profile';
-      ROUTE_PARAMS = { uid };
-      MOBILE_DRAWER_OPEN = false;
-      render();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      tryLeave(() => {
+        CUR_ROUTE = 'profile';
+        ROUTE_PARAMS = { uid };
+        MOBILE_DRAWER_OPEN = false;
+        render();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
     },
     openPortfolioPrint: uid => {
-      CUR_ROUTE = 'portfolio_print';
-      ROUTE_PARAMS = { uid };
-      MOBILE_DRAWER_OPEN = false;
-      render();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      tryLeave(() => {
+        CUR_ROUTE = 'portfolio_print';
+        ROUTE_PARAMS = { uid };
+        MOBILE_DRAWER_OPEN = false;
+        render();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
     },
     refresh: async () => {
       await syncData(true);
@@ -248,30 +347,19 @@ function getContext() {
       renderPasswordChange($('#root'), {
         user: ME,
         forced: false,
-        onDone: () => render(),
+        onDone: () => { saveSession(ME); render(); },
         onCancel: () => render()
       });
     },
-    logout: () => {
-      ME = null;
-      saveSession(null);
-      CUR_ROUTE = 'dashboard';
-      ROUTE_PARAMS = {};
-      LAST_CREDS = [];
-      render();
-    }
+    logout: () => handleLogout()
   };
 }
 
-function renderBreadcrumb(ctx) {
+function renderBreadcrumb() {
   const parts = [{ label: 'Platforma', route: 'dashboard' }];
   if (CUR_ROUTE === 'profile') {
     const targetUser = STATE.users.find(u => u.id === (ROUTE_PARAMS.uid || ME.id));
-    if (['director', 'reviewer', 'it_admin'].includes(ME.role)) {
-      parts.push({ label: 'Pedagoglar', route: 'teachers' });
-    } else {
-      parts.push({ label: 'Reyting jadvali', route: 'ranking' });
-    }
+    parts.push(['director', 'reviewer', 'it_admin'].includes(ME.role) ? { label: 'Pedagoglar', route: 'teachers' } : { label: 'Reyting jadvali', route: 'ranking' });
     parts.push({ label: targetUser ? targetUser.name : 'Profil' });
   } else if (CUR_ROUTE === 'portfolio_print') {
     const targetUser = STATE.users.find(u => u.id === (ROUTE_PARAMS.uid || ME.id));
@@ -283,15 +371,12 @@ function renderBreadcrumb(ctx) {
 
   return `
     <nav class="breadcrumbs" aria-label="Sahifa yo‘li">
-      ${parts.map((p, idx) => {
-        const isLast = idx === parts.length - 1;
-        return `
-          ${idx > 0 ? `<span class="breadcrumbs-sep">${icon('chevron-right', 14)}</span>` : ''}
-          ${isLast || !p.route
-            ? `<span class="breadcrumbs-current">${esc(p.label)}</span>`
-            : `<span class="breadcrumbs-root" data-bc-route="${p.route}">${esc(p.label)}</span>`}
-        `;
-      }).join('')}
+      ${parts.map((p, idx) => `
+        ${idx > 0 ? `<span class="breadcrumbs-sep">${icon('chevron-right', 13)}</span>` : ''}
+        ${idx === parts.length - 1 || !p.route
+          ? `<span class="breadcrumbs-current">${esc(p.label)}</span>`
+          : `<span class="breadcrumbs-root" data-bc-route="${p.route}">${esc(p.label)}</span>`}
+      `).join('')}
     </nav>
   `;
 }
@@ -304,7 +389,7 @@ function renderAppShell() {
 
   const navSections = getNavSections();
   const notifications = buildNotifications(ctx);
-  const unreadCount = notifications.filter(n => n.tone === 'warning' || n.tone === 'error').length;
+  const unreadCount = notifications.filter(n => !n.read).length;
   const isDark = resolveTheme() === 'dark';
 
   const quickAction = ['teacher', 'reviewer'].includes(ME.role)
@@ -320,7 +405,7 @@ function renderAppShell() {
       <aside class="sidebar noprint" aria-label="Asosiy navigatsiya">
         <div class="sidebar-head">
           <div class="brand-mark">
-            <div class="brand-logo">${icon('graduation-cap', 18)}</div>
+            <div class="brand-logo">${icon('graduation-cap', 17)}</div>
             <div class="brand-text">
               <div class="brand-name">Pedagog Reyting</div>
               <div class="brand-sub">Norin tuman maktabi</div>
@@ -329,7 +414,7 @@ function renderAppShell() {
           <button type="button" class="btn btn-ghost btn-icon btn-sm sidebar-collapse-btn" id="sidebar-toggle-btn"
             title="${SIDEBAR_COLLAPSED ? 'Menyuni yoyish' : 'Menyuni yig‘ish'}"
             aria-label="${SIDEBAR_COLLAPSED ? 'Menyuni yoyish' : 'Menyuni yig‘ish'}">
-            ${icon(SIDEBAR_COLLAPSED ? 'panel-left-open' : 'panel-left-close', 17)}
+            ${icon(SIDEBAR_COLLAPSED ? 'panel-left-open' : 'panel-left-close', 16)}
           </button>
         </div>
 
@@ -340,12 +425,8 @@ function renderAppShell() {
               ${sec.items.map(item => {
                 const isActive = CUR_ROUTE === item.id || (item.id === 'profile' && CUR_ROUTE === 'profile' && (ROUTE_PARAMS.uid || ME.id) === ME.id);
                 return `
-                  <button type="button"
-                    class="nav-item ${isActive ? 'active' : ''}"
-                    data-route="${item.id}"
-                    data-tooltip="${esc(item.label)}"
-                    aria-current="${isActive ? 'page' : 'false'}">
-                    ${icon(item.icon, 18)}
+                  <button type="button" class="nav-item ${isActive ? 'active' : ''}" data-route="${item.id}" data-tooltip="${esc(item.label)}" aria-current="${isActive ? 'page' : 'false'}">
+                    ${icon(item.icon, 17)}
                     <span class="nav-item-label">${esc(item.label)}</span>
                     ${item.badge > 0 ? `<span class="nav-badge">${item.badge}</span>` : ''}
                   </button>
@@ -356,7 +437,7 @@ function renderAppShell() {
         </div>
 
         <div class="sidebar-foot">
-          <div class="sidebar-user-card" style="cursor:pointer" id="sidebar-user-btn" title="Profil va sozlamalar">
+          <div class="sidebar-user-card" style="cursor:pointer" id="sidebar-user-btn" title="Profil">
             ${avatarHtml(ME.name, 'sm')}
             <div class="sidebar-user-meta">
               <div class="sidebar-user-name">${esc(ME.name)}</div>
@@ -369,15 +450,13 @@ function renderAppShell() {
       <div class="workspace">
         <header class="topbar noprint">
           <div class="topbar-left">
-            <button type="button" class="btn btn-ghost btn-icon mobile-menu-btn" id="mobile-menu-btn" aria-label="Menyuni ochish">
-              ${icon('menu', 20)}
-            </button>
-            ${renderBreadcrumb(ctx)}
+            <button type="button" class="btn btn-ghost btn-icon mobile-menu-btn" id="mobile-menu-btn" aria-label="Menyuni ochish">${icon('menu', 19)}</button>
+            ${renderBreadcrumb()}
           </div>
 
           <div class="topbar-right">
-            <button type="button" class="search-trigger" id="global-search-btn" aria-label="Global qidiruv">
-              ${icon('search', 15)}
+            <button type="button" class="search-trigger" id="global-search-btn" aria-label="Tezkor qidiruv">
+              ${icon('search', 14)}
               <span class="search-trigger-text">Qidiruv…</span>
               <span class="kbd-hint">Ctrl+K</span>
             </button>
@@ -386,21 +465,21 @@ function renderAppShell() {
 
             <div class="popover-wrap">
               <button type="button" class="btn btn-ghost btn-icon" id="notif-btn" aria-label="Bildirishnomalar" title="Bildirishnomalar" style="position:relative">
-                ${icon('bell', 18)}
+                ${icon('bell', 17)}
                 ${unreadCount > 0 ? '<span class="notif-dot"></span>' : ''}
               </button>
               <div class="popover-menu popover-lg" id="notif-menu" style="display:none">
                 <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px 6px">
-                  <span style="font-size:13px;font-weight:600">Bildirishnomalar</span>
-                  <span class="badge badge-neutral">${notifications.length} ta</span>
+                  <span style="font-size:13px;font-weight:600">Bildirishnomalar (${unreadCount} ta o‘qilmagan)</span>
+                  ${unreadCount > 0 ? `<button type="button" class="btn btn-ghost btn-sm" id="mark-all-read-btn" style="padding:2px 6px;min-height:24px;font-size:11.5px">${icon('check-check', 13)} Barchasi o‘qildi</button>` : ''}
                 </div>
                 <div class="dropdown-sep"></div>
                 <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:2px">
                   ${notifications.map((n, idx) => `
-                    <button type="button" class="dropdown-item" data-notif-idx="${idx}" style="align-items:flex-start;padding:9px 10px">
-                      <span style="color:var(--${n.tone === 'neutral' ? 'text-muted' : n.tone});margin-top:1px">${icon(n.icon, 16)}</span>
+                    <button type="button" class="dropdown-item" data-notif-idx="${idx}" style="align-items:flex-start;padding:8px 10px;${n.read ? 'opacity:0.65' : 'background:var(--primary-soft)'}">
+                      <span style="color:var(--${n.tone === 'neutral' ? 'text-muted' : n.tone});margin-top:1px">${icon(n.icon, 15)}</span>
                       <div style="min-width:0;flex:1">
-                        <div style="font-size:12.5px;font-weight:600;color:var(--text);white-space:normal">${esc(n.title)}</div>
+                        <div style="font-size:12.5px;font-weight:${n.read ? '500' : '600'};color:var(--text);white-space:normal">${esc(n.title)}</div>
                         <div style="font-size:11.5px;color:var(--text-muted);white-space:normal;margin-top:2px">${esc(n.desc)}</div>
                       </div>
                     </button>
@@ -409,28 +488,28 @@ function renderAppShell() {
               </div>
             </div>
 
-            <button type="button" class="btn btn-ghost btn-icon" id="theme-toggle-btn" title="Yorug‘ / Qorong‘i rejim" aria-label="Mavzuni almashtirish">
-              ${icon(isDark ? 'sun' : 'moon', 18)}
+            <button type="button" class="btn btn-ghost btn-icon" id="theme-toggle-btn" title="Mavzu" aria-label="Mavzuni almashtirish">
+              ${icon(isDark ? 'sun' : 'moon', 17)}
             </button>
 
             <div class="popover-wrap">
-              <button type="button" class="btn btn-ghost" id="profile-menu-btn" style="padding:4px 8px 4px 4px;gap:8px" aria-label="Profil menyusi">
+              <button type="button" class="btn btn-ghost" id="profile-menu-btn" style="padding:4px 8px 4px 4px;gap:7px" aria-label="Profil menyusi">
                 ${avatarHtml(ME.name, 'sm')}
-                <span class="hide-xs" style="font-size:13px;font-weight:500;max-width:130px;overflow:hidden;text-overflow:ellipsis">${esc(ME.name.split(' ')[0])}</span>
+                <span class="hide-xs" style="font-size:13px;font-weight:500;max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(ME.name.split(' ')[0])}</span>
                 ${icon('chevron-down', 14)}
               </button>
               <div class="popover-menu" id="profile-menu" style="display:none">
                 <div style="padding:8px 10px">
-                  <div style="font-size:13.5px;font-weight:600;color:var(--text)">${esc(ME.name)}</div>
+                  <div style="font-size:13px;font-weight:600;color:var(--text)">${esc(ME.name)}</div>
                   <div style="font-size:12px;color:var(--text-muted)">${esc(ROLE[ME.role] || ME.role)}</div>
                   ${ME.subject ? `<div style="font-size:11.5px;color:var(--primary);margin-top:2px">${esc(ME.subject)}</div>` : ''}
                 </div>
                 <div class="dropdown-sep"></div>
-                <button type="button" class="dropdown-item" id="pm-profile">${icon('user', 16)} Mening profilim</button>
-                <button type="button" class="dropdown-item" id="pm-settings">${icon('settings', 16)} Sozlamalar</button>
-                <button type="button" class="dropdown-item" id="pm-password">${icon('key', 16)} Parolni almashtirish</button>
+                <button type="button" class="dropdown-item" id="pm-profile">${icon('user', 15)} Mening profilim</button>
+                <button type="button" class="dropdown-item" id="pm-settings">${icon('settings', 15)} Sozlamalar</button>
+                <button type="button" class="dropdown-item" id="pm-password">${icon('key', 15)} Parolni almashtirish</button>
                 <div class="dropdown-sep"></div>
-                <button type="button" class="dropdown-item danger" id="pm-logout">${icon('log-out', 16)} Tizimdan chiqish</button>
+                <button type="button" class="dropdown-item danger" id="pm-logout">${icon('log-out', 15)} Tizimdan chiqish</button>
               </div>
             </div>
           </div>
@@ -438,31 +517,28 @@ function renderAppShell() {
 
         ${IS_OFFLINE ? `
           <div class="offline-banner" role="status">
-            ${icon('wifi-off', 16)}
-            <span>Internet aloqasi uzilgan. O‘zgarishlar saqlanmasligi mumkin.</span>
+            ${icon('wifi-off', 15)}<span>Internet aloqasi uzilgan. Ma’lumotlar yangilanmayapti.</span>
           </div>
         ` : ''}
 
-        <main class="main-content" id="main-view"></main>
+        <main class="main-content ${LAST_RENDERED_ROUTE === CUR_ROUTE ? 'no-anim' : ''}" id="main-view"></main>
       </div>
     </div>
   `;
 
-  // Bind navigation & shell events
+  LAST_RENDERED_ROUTE = CUR_ROUTE;
+
   $$('[data-route]').forEach(btn => {
     btn.onclick = () => {
       const r = btn.dataset.route;
       ctx.navigate(r, r === 'profile' ? { uid: ME.id } : {});
     };
   });
+  $$('[data-bc-route]').forEach(el => { el.onclick = () => ctx.navigate(el.dataset.bcRoute); });
 
-  $$('[data-bc-route]').forEach(el => {
-    el.onclick = () => ctx.navigate(el.dataset.bcRoute);
-  });
-
-  const toggleSidebarBtn = $('#sidebar-toggle-btn');
-  if (toggleSidebarBtn) {
-    toggleSidebarBtn.onclick = () => {
+  const toggleBtn = $('#sidebar-toggle-btn');
+  if (toggleBtn) {
+    toggleBtn.onclick = () => {
       SIDEBAR_COLLAPSED = !SIDEBAR_COLLAPSED;
       localStorage.setItem('reyting_sidebar_collapsed', SIDEBAR_COLLAPSED ? '1' : '0');
       renderAppShell();
@@ -480,62 +556,60 @@ function renderAppShell() {
 
   $('#sidebar-user-btn').onclick = () => ctx.openProfile(ME.id);
   $('#global-search-btn').onclick = () => openGlobalSearch(ctx);
-
   $('#topbar-quick-btn').onclick = () => {
     if (['teacher', 'reviewer'].includes(ME.role)) ctx.navigate('add_entry');
     else if (ME.role === 'director') ctx.navigate('reviews');
     else ctx.navigate('admin');
   };
-
   $('#theme-toggle-btn').onclick = () => {
     const next = resolveTheme() === 'dark' ? 'light' : 'dark';
     applyTheme(next);
-    $('#theme-toggle-btn').innerHTML = icon(next === 'dark' ? 'sun' : 'moon', 18);
+    $('#theme-toggle-btn').innerHTML = icon(next === 'dark' ? 'sun' : 'moon', 17);
   };
 
-  // Popovers
   const notifMenu = $('#notif-menu');
   const profileMenu = $('#profile-menu');
-
   const closePopovers = () => {
     const nm = $('#notif-menu');
     const pm = $('#profile-menu');
     if (nm) nm.style.display = 'none';
     if (pm) pm.style.display = 'none';
   };
+  window._closeTopbarPopovers = closePopovers;
 
   $('#notif-btn').onclick = e => {
     e.stopPropagation();
-    const isOpen = notifMenu.style.display === 'block';
+    const open = notifMenu.style.display === 'block';
     closePopovers();
-    notifMenu.style.display = isOpen ? 'none' : 'block';
+    notifMenu.style.display = open ? 'none' : 'block';
   };
-
   $('#profile-menu-btn').onclick = e => {
     e.stopPropagation();
-    const isOpen = profileMenu.style.display === 'block';
+    const open = profileMenu.style.display === 'block';
     closePopovers();
-    profileMenu.style.display = isOpen ? 'none' : 'block';
+    profileMenu.style.display = open ? 'none' : 'block';
   };
-
   notifMenu.onclick = e => e.stopPropagation();
   profileMenu.onclick = e => e.stopPropagation();
 
-  $$('[data-notif-idx]').forEach(btn => {
-    btn.onclick = () => {
-      closePopovers();
-      notifications[Number(btn.dataset.notifIdx)].action();
+  const markAllBtn = $('#mark-all-read-btn');
+  if (markAllBtn) {
+    markAllBtn.onclick = async () => {
+      markLocalNotifRead(notifications.map(n => n.id));
+      STATE.serverNotifications.forEach(sn => { sn.is_read = true; });
+      await api.markNotificationRead(null);
+      renderAppShell();
     };
-  });
+  }
 
+  $$('[data-notif-idx]').forEach(btn => {
+    btn.onclick = () => { closePopovers(); notifications[Number(btn.dataset.notifIdx)].action(); };
+  });
   $('#pm-profile').onclick = () => { closePopovers(); ctx.openProfile(ME.id); };
   $('#pm-settings').onclick = () => { closePopovers(); ctx.navigate('settings'); };
   $('#pm-password').onclick = () => { closePopovers(); ctx.openPasswordModal(); };
   $('#pm-logout').onclick = () => { closePopovers(); ctx.logout(); };
 
-  window._closeTopbarPopovers = closePopovers;
-
-  // Render active view inside #main-view
   const main = $('#main-view');
   if (STATE.loading && !STATE.users.length) {
     main.innerHTML = skeletonDashboardHtml();
@@ -546,10 +620,10 @@ function renderAppShell() {
     main.innerHTML = `
       <div class="card">
         <div class="empty-state">
-          <div class="empty-icon" style="color:var(--error);border-color:var(--error-border)">${icon('alert-circle', 24)}</div>
+          <div class="empty-icon" style="color:var(--error);border-color:var(--error-border)">${icon('alert-circle', 22)}</div>
           <h3 class="empty-title">Ma’lumotlarni yuklab bo‘lmadi</h3>
           <p class="empty-desc">${esc(STATE.syncError)}</p>
-          <button type="button" class="btn btn-primary" id="retry-sync-btn">${icon('refresh-cw', 16)} Qayta urinish</button>
+          <button type="button" class="btn btn-primary" id="retry-sync-btn">${icon('refresh-cw', 15)} Qayta urinish</button>
         </div>
       </div>
     `;
@@ -569,6 +643,7 @@ function renderAppShell() {
   else if (CUR_ROUTE === 'analytics') renderAnalytics(main, ctx);
   else if (CUR_ROUTE === 'reports') renderReports(main, ctx);
   else if (CUR_ROUTE === 'admin') renderAdmin(main, ctx);
+  else if (CUR_ROUTE === 'monitoring' || CUR_ROUTE === 'login_history' || CUR_ROUTE === 'presence') renderMonitoring(main, ctx);
   else if (CUR_ROUTE === 'settings') renderSettings(main, ctx);
 
   animateCounters(main);
@@ -577,9 +652,13 @@ function renderAppShell() {
 function render() {
   const root = $('#root');
   if (!ME) {
+    stopHeartbeat();
     renderLogin(root, {
       onLoginSuccess: async user => {
+        const sess = loadSession();
         ME = user;
+        SESSION_EXPIRES_AT = sess?.expiresAt || null;
+        EXPIRY_WARNED = false;
         CUR_ROUTE = 'dashboard';
         await syncData(true);
         render();
@@ -592,7 +671,7 @@ function render() {
     renderPasswordChange(root, {
       user: ME,
       forced: true,
-      onDone: () => render()
+      onDone: () => { saveSession(ME); render(); }
     });
     return;
   }
@@ -600,15 +679,9 @@ function render() {
   renderAppShell();
 }
 
-// Global click & keyboard listeners
-document.addEventListener('click', () => {
-  if (window._closeTopbarPopovers) window._closeTopbarPopovers();
-});
-
+document.addEventListener('click', () => { if (window._closeTopbarPopovers) window._closeTopbarPopovers(); });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && window._closeTopbarPopovers) {
-    window._closeTopbarPopovers();
-  }
+  if (e.key === 'Escape' && window._closeTopbarPopovers) window._closeTopbarPopovers();
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
     if (!ME || ME.must_change) return;
     e.preventDefault();
@@ -616,26 +689,22 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// Online / Offline listeners
-window.addEventListener('online', () => {
-  IS_OFFLINE = false;
-  toast('Internet aloqasi tiklandi.', 'success');
-  if (ME) render();
-});
-window.addEventListener('offline', () => {
-  IS_OFFLINE = true;
-  toast('Internet aloqasi uzildi.', 'warning');
-  if (ME) render();
+window.addEventListener('beforeunload', e => {
+  if (DIRTY_FORM && CUR_ROUTE === 'add_entry') {
+    e.preventDefault();
+    e.returnValue = '';
+  }
 });
 
-initThemeListener(() => {
-  if (ME) render();
-});
+window.addEventListener('online', () => { IS_OFFLINE = false; toast('Internet aloqasi tiklandi.', 'success'); if (ME) render(); });
+window.addEventListener('offline', () => { IS_OFFLINE = true; toast('Internet aloqasi uzildi.', 'warning'); if (ME) render(); });
+initThemeListener(() => { if (ME) render(); });
 
-// Bootstrap
 (async function init() {
-  ME = loadSession();
-  if (ME) {
+  const sess = loadSession();
+  if (sess?.user) {
+    ME = sess.user;
+    SESSION_EXPIRES_AT = sess.expiresAt;
     render();
     await syncData(false);
   }

@@ -1,57 +1,68 @@
 /* ==========================================================================
-   PEDAGOG REYTING — DESIGN SYSTEM TOKENS
-   8px spacing scale, calibrated Light & Dark palettes, Inter typography
+   PEDAGOG REYTING — DESIGN SYSTEM V2 TOKENS
+   Institutional Intelligence: Quiet Luxury + Apple Precision + Linear Simplicity
    ========================================================================== */
 
 :root {
-  /* Brand & Semantic Colors (Light Mode) */
-  --primary: #2563EB;
-  --primary-hover: #1D4ED8;
-  --primary-active: #1E40AF;
-  --primary-soft: rgba(37, 99, 235, 0.08);
-  --primary-border: rgba(37, 99, 235, 0.22);
-  --primary-glow: rgba(37, 99, 235, 0.16);
-
-  --dark: #0F172A;
-  --bg: #F8FAFC;
-  --bg-subtle: #F1F5F9;
+  /* Light Theme Palette */
+  --bg: #F5F6F8;
   --surface: #FFFFFF;
+  --bg-subtle: #F0F2F5;
   --surface-elevated: #FFFFFF;
-  --surface-glass: rgba(255, 255, 255, 0.78);
+  --surface-glass: rgba(255, 255, 255, 0.82);
 
-  --text: #0F172A;
-  --text-2: #334155;
-  --text-muted: #64748B;
-  --text-subtle: #94A3B8;
+  --primary: #2448C7;
+  --primary-hover: #1D3BA7;
+  --primary-active: #162E87;
+  --primary-soft: rgba(36, 72, 199, 0.08);
+  --primary-border: rgba(36, 72, 199, 0.22);
+  --primary-glow: rgba(36, 72, 199, 0.16);
 
-  --border: #E2E8F0;
-  --border-strong: #CBD5E1;
+  --dark: #111827;
+  --text: #111827;
+  --text-2: #475467;
+  --text-muted: #667085;
+  --text-subtle: #98A2B3;
 
-  --success: #16A34A;
-  --success-soft: #DCFCE7;
-  --success-border: rgba(22, 163, 74, 0.24);
+  --border: #E4E7EC;
+  --border-strong: #D0D5DD;
 
-  --warning: #D97706;
-  --warning-soft: #FEF3C7;
-  --warning-border: rgba(217, 119, 6, 0.25);
+  --success: #15803D;
+  --success-soft: #ECFDF3;
+  --success-border: rgba(21, 128, 61, 0.24);
 
-  --error: #DC2626;
-  --error-soft: #FEE2E2;
-  --error-border: rgba(220, 38, 38, 0.24);
+  --warning: #B45309;
+  --warning-soft: #FFFAEB;
+  --warning-border: rgba(180, 83, 9, 0.25);
 
-  /* Section Accents (A: Potential, B: Student Achievements, C: Activity) */
-  --sec-a: #2563EB;
-  --sec-b: #0D9488;
-  --sec-c: #D97706;
+  --error: #B42318;
+  --error-soft: #FEF3F2;
+  --error-border: rgba(180, 35, 24, 0.24);
 
-  /* Sidebar */
+  /* 26-AF Section Accents */
+  --sec-a: #2448C7;
+  --sec-b: #0F766E;
+  --sec-c: #B45309;
+
+  /* Muted Podium Accents */
+  --gold: #A16207;
+  --gold-soft: #FEF9E7;
+  --gold-border: rgba(161, 98, 7, 0.28);
+  --silver: #475569;
+  --silver-soft: #F1F5F9;
+  --silver-border: rgba(71, 85, 105, 0.26);
+  --bronze: #9A3412;
+  --bronze-soft: #FFF7ED;
+  --bronze-border: rgba(154, 52, 18, 0.25);
+
+  /* Layout Shell */
   --sidebar-bg: #FFFFFF;
-  --sidebar-border: #E2E8F0;
-  --sidebar-width: 264px;
-  --sidebar-collapsed: 76px;
-  --topbar-height: 64px;
+  --sidebar-border: #E4E7EC;
+  --sidebar-width: 256px;
+  --sidebar-collapsed: 72px;
+  --topbar-height: 60px;
 
-  /* Spacing (8px base) */
+  /* Spacing Scale (4, 8, 12, 16, 20, 24, 32, 40, 48, 64) */
   --sp-1: 4px;
   --sp-2: 8px;
   --sp-3: 12px;
@@ -61,82 +72,93 @@
   --sp-8: 32px;
   --sp-10: 40px;
   --sp-12: 48px;
+  --sp-16: 64px;
 
   /* Radii */
   --radius-sm: 8px;
   --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
   --radius-full: 9999px;
 
   /* Shadows */
-  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px -1px rgba(15, 23, 42, 0.04);
-  --shadow-md: 0 4px 12px -2px rgba(15, 23, 42, 0.07), 0 2px 4px -1px rgba(15, 23, 42, 0.04);
-  --shadow-lg: 0 20px 40px -12px rgba(15, 23, 42, 0.14), 0 4px 12px -2px rgba(15, 23, 42, 0.06);
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-md: 0 4px 12px -2px rgba(16, 24, 40, 0.08), 0 2px 4px -2px rgba(16, 24, 40, 0.04);
+  --shadow-lg: 0 20px 40px -12px rgba(16, 24, 40, 0.14), 0 4px 12px -2px rgba(16, 24, 40, 0.05);
 
   /* Motion */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --dur-fast: 150ms;
+  --ease-spring: cubic-bezier(0.34, 1.45, 0.64, 1);
+  --dur-micro: 120ms;
+  --dur-fast: 160ms;
   --dur-base: 220ms;
-  --dur-slow: 320ms;
+  --dur-slow: 300ms;
 
   /* Typography */
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-/* Calibrated Dark Mode (Not inverted — deep slate surfaces with crisp contrast) */
+/* Calibrated Dark Theme */
 [data-theme="dark"] {
-  --primary: #3B82F6;
-  --primary-hover: #60A5FA;
-  --primary-active: #2563EB;
-  --primary-soft: rgba(59, 130, 246, 0.14);
-  --primary-border: rgba(59, 130, 246, 0.3);
-  --primary-glow: rgba(59, 130, 246, 0.25);
+  --bg: #0B0E14;
+  --surface: #121720;
+  --bg-subtle: #1A212C;
+  --surface-elevated: #1A212C;
+  --surface-glass: rgba(18, 23, 32, 0.82);
 
-  --dark: #F8FAFC;
-  --bg: #0B1120;
-  --bg-subtle: #131C31;
-  --surface: #111827;
-  --surface-elevated: #172135;
-  --surface-glass: rgba(17, 24, 39, 0.78);
+  --primary: #7B9AFF;
+  --primary-hover: #96B0FF;
+  --primary-active: #5F82FA;
+  --primary-soft: rgba(123, 154, 255, 0.14);
+  --primary-border: rgba(123, 154, 255, 0.28);
+  --primary-glow: rgba(123, 154, 255, 0.24);
 
-  --text: #F8FAFC;
+  --dark: #F3F4F6;
+  --text: #F3F4F6;
   --text-2: #CBD5E1;
   --text-muted: #94A3B8;
   --text-subtle: #64748B;
 
-  --border: #1E293B;
-  --border-strong: #334155;
+  --border: #283140;
+  --border-strong: #374357;
 
-  --success: #22C55E;
-  --success-soft: rgba(34, 197, 94, 0.14);
-  --success-border: rgba(34, 197, 94, 0.28);
+  --success: #34D399;
+  --success-soft: rgba(52, 211, 153, 0.13);
+  --success-border: rgba(52, 211, 153, 0.28);
 
-  --warning: #F59E0B;
-  --warning-soft: rgba(245, 158, 11, 0.14);
-  --warning-border: rgba(245, 158, 11, 0.28);
+  --warning: #FBBF24;
+  --warning-soft: rgba(251, 191, 36, 0.13);
+  --warning-border: rgba(251, 191, 36, 0.28);
 
-  --error: #EF4444;
-  --error-soft: rgba(239, 68, 68, 0.14);
-  --error-border: rgba(239, 68, 68, 0.28);
+  --error: #F87171;
+  --error-soft: rgba(248, 113, 113, 0.14);
+  --error-border: rgba(248, 113, 113, 0.28);
 
-  --sec-a: #3B82F6;
-  --sec-b: #14B8A6;
-  --sec-c: #F59E0B;
+  --sec-a: #7B9AFF;
+  --sec-b: #2DD4BF;
+  --sec-c: #FBBF24;
 
-  --sidebar-bg: #0F172A;
-  --sidebar-border: #1E293B;
+  --gold: #EAB308;
+  --gold-soft: rgba(234, 179, 8, 0.12);
+  --gold-border: rgba(234, 179, 8, 0.3);
+  --silver: #CBD5E1;
+  --silver-soft: rgba(203, 213, 225, 0.1);
+  --silver-border: rgba(203, 213, 225, 0.25);
+  --bronze: #FB923C;
+  --bronze-soft: rgba(251, 146, 60, 0.12);
+  --bronze-border: rgba(251, 146, 60, 0.28);
+
+  --sidebar-bg: #10141D;
+  --sidebar-border: #283140;
 
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 8px 20px -4px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 8px 20px -4px rgba(0, 0, 0, 0.52);
   --shadow-lg: 0 24px 48px -12px rgba(0, 0, 0, 0.72);
 }
 
-/* Reduced Motion Accessibility */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

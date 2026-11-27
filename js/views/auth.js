@@ -1,5 +1,5 @@
-// Login & Password Change Views (Corporate Minimalist UX)
-import { api, saveSession } from '../api.js';
+// Login & Password Change Views (Elegant Institutional Access)
+import { api } from '../api.js';
 import { icon } from '../icons.js';
 import { $, esc, toast, applyTheme, resolveTheme } from '../ui.js';
 
@@ -11,49 +11,49 @@ export function renderLogin(root, { onLoginSuccess }) {
       <aside class="auth-aside">
         <div class="auth-aside-inner">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:36px">
-            <div class="brand-logo" style="width:40px;height:40px;border-radius:12px">
+            <div class="brand-logo" style="width:40px;height:40px;border-radius:11px">
               ${icon('graduation-cap', 22)}
             </div>
             <div>
-              <div style="font-size:16px;font-weight:700;letter-spacing:-0.02em">Pedagog Reyting</div>
+              <div style="font-size:15.5px;font-weight:700;letter-spacing:-0.02em">Pedagog Reyting</div>
               <div style="font-size:12.5px;color:#94A3B8">Norin tuman ixtisoslashtirilgan maktabi</div>
             </div>
           </div>
 
-          <h1 style="font-size:32px;line-height:1.2;font-weight:700;color:#FFFFFF;letter-spacing:-0.03em;margin-bottom:14px">
+          <h1 style="font-size:30px;line-height:1.22;font-weight:700;color:#FFFFFF;letter-spacing:-0.03em;margin-bottom:14px">
             Ta’lim sifatini tahlil qilish va shaffof reyting tizimi
           </h1>
-          <p style="font-size:15px;line-height:1.6;color:#94A3B8;margin:0">
-            26-AF buyruq asosida pedagoglar faoliyatini 15 ta mezon va 130 ballik tizim bo‘yicha baholash, tasdiqlash va hisobotlarni shakllantirish platformasi.
+          <p style="font-size:14.5px;line-height:1.6;color:#94A3B8;margin:0">
+            26-AF-sonli buyruq asosida pedagoglar faoliyatini 15 ta indikator va 130 ballik shkala bo‘yicha baholash, tasdiqlash va hisobotlarni shakllantirish platformasi.
           </p>
 
           <div class="auth-feature-list">
             <div class="auth-feature-item">
-              <div class="auth-feature-icon">${icon('bar-chart-3', 18)}</div>
+              <div class="auth-feature-icon">${icon('bar-chart-3', 17)}</div>
               <div>
-                <div style="font-size:14px;font-weight:600;color:#F8FAFC">Real vaqt tahlili va dinamika</div>
-                <div style="font-size:12.5px;color:#94A3B8;margin-top:2px">Salohiyat, o‘quvchilar yutuqlari va fan faolligi bo‘yicha aniq ko‘rsatkichlar.</div>
+                <div style="font-size:13.5px;font-weight:600;color:#F8FAFC">Institutional Intelligence</div>
+                <div style="font-size:12.5px;color:#94A3B8;margin-top:2px">Salohiyat, o‘quvchi yutuqlari va fan faolligi bo‘yicha real tahlillar.</div>
               </div>
             </div>
             <div class="auth-feature-item">
-              <div class="auth-feature-icon">${icon('shield', 18)}</div>
+              <div class="auth-feature-icon">${icon('shield', 17)}</div>
               <div>
-                <div style="font-size:14px;font-weight:600;color:#F8FAFC">Xavfsiz va shaffof tasdiqlash</div>
-                <div style="font-size:12.5px;color:#94A3B8;margin-top:2px">Mas’ul ekspertlar va rahbariyat nazorati ostida hujjatli tekshiruv.</div>
+                <div style="font-size:13.5px;font-weight:600;color:#F8FAFC">Xavfsiz tasdiqlash va audit</div>
+                <div style="font-size:12.5px;color:#94A3B8;margin-top:2px">Mas’ul ekspertlar va rahbariyat nazorati ostida shaffof tekshiruv.</div>
               </div>
             </div>
             <div class="auth-feature-item">
-              <div class="auth-feature-icon">${icon('printer', 18)}</div>
+              <div class="auth-feature-icon">${icon('printer', 17)}</div>
               <div>
-                <div style="font-size:14px;font-weight:600;color:#F8FAFC">Rasmiy A4 portfolio va hisobotlar</div>
-                <div style="font-size:12.5px;color:#94A3B8;margin-top:2px">Bir tugma bilan chop etishga tayyor shaxsiy portfolio va Excel eksport.</div>
+                <div style="font-size:13.5px;font-weight:600;color:#F8FAFC">Rasmiy A4 portfolio va hisobotlar</div>
+                <div style="font-size:12.5px;color:#94A3B8;margin-top:2px">Chop etishga tayyor shaxsiy portfolio va CSV eksport.</div>
               </div>
             </div>
           </div>
         </div>
 
-        <div style="position:relative;z-index:1;font-size:12.5px;color:#64748B">
-          26-AF buyruq standarti · 15 indikator · 130 ballik shkala
+        <div style="position:relative;z-index:1;font-size:12px;color:#64748B">
+          26-AF buyruq standarti · 15 indikator · 130 ballik tizim
         </div>
       </aside>
 
@@ -66,25 +66,23 @@ export function renderLogin(root, { onLoginSuccess }) {
 
         <div class="auth-card">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
-            <div class="brand-logo" style="width:36px;height:36px">
-              ${icon('graduation-cap', 20)}
-            </div>
+            <div class="brand-logo" style="width:36px;height:36px">${icon('graduation-cap', 19)}</div>
             <div>
-              <div style="font-size:15px;font-weight:700;color:var(--text)">Pedagog Reyting</div>
+              <div style="font-size:14.5px;font-weight:700;color:var(--text)">Pedagog Reyting</div>
               <div style="font-size:12px;color:var(--text-muted)">Norin tuman ixtisoslashtirilgan maktabi</div>
             </div>
           </div>
 
-          <h2 style="font-size:21px;font-weight:700;margin-bottom:6px">Tizimga kirish</h2>
-          <p style="font-size:13.5px;color:var(--text-muted);margin:0 0 22px">
+          <h2 style="font-size:20px;font-weight:700;margin-bottom:5px">Tizimga kirish</h2>
+          <p style="font-size:13px;color:var(--text-muted);margin:0 0 20px">
             Shaxsiy kabinetingizga kirish uchun login va parolingizni kiriting.
           </p>
 
-          <form id="login-form" class="stack-v" style="gap:16px" novalidate>
+          <form id="login-form" class="stack-v" style="gap:15px" novalidate>
             <div class="field">
               <label for="lg">Login</label>
               <div class="input-icon-wrap">
-                <span class="input-leading">${icon('user', 16)}</span>
+                <span class="input-leading">${icon('user', 15)}</span>
                 <input id="lg" name="login" class="input has-leading" type="text" autocomplete="username" placeholder="Masalan: a.karimov" required autofocus>
               </div>
             </div>
@@ -92,10 +90,10 @@ export function renderLogin(root, { onLoginSuccess }) {
             <div class="field">
               <label for="pw">Parol</label>
               <div class="input-icon-wrap">
-                <span class="input-leading">${icon('key', 16)}</span>
+                <span class="input-leading">${icon('key', 15)}</span>
                 <input id="pw" name="password" class="input has-leading" style="padding-right:42px" type="password" autocomplete="current-password" placeholder="Parolingizni kiriting" required>
                 <button type="button" id="toggle-pw" class="btn btn-ghost btn-icon btn-sm input-trailing" aria-label="Parolni ko‘rsatish" title="Parolni ko‘rsatish">
-                  ${icon('eye', 16)}
+                  ${icon('eye', 15)}
                 </button>
               </div>
             </div>
@@ -110,7 +108,7 @@ export function renderLogin(root, { onLoginSuccess }) {
             </button>
           </form>
 
-          <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted);text-align:center">
+          <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted);text-align:center">
             Parolni unutgan bo‘lsangiz, maktab IT mutaxassisiga murojaat qiling.
           </div>
         </div>
@@ -128,22 +126,21 @@ export function renderLogin(root, { onLoginSuccess }) {
   $('#toggle-pw').onclick = () => {
     pwShown = !pwShown;
     $('#pw').type = pwShown ? 'text' : 'password';
-    $('#toggle-pw').innerHTML = icon(pwShown ? 'eye-off' : 'eye', 16);
+    $('#toggle-pw').innerHTML = icon(pwShown ? 'eye-off' : 'eye', 15);
     $('#toggle-pw').setAttribute('aria-label', pwShown ? 'Parolni yashirish' : 'Parolni ko‘rsatish');
   };
 
   const showErr = msg => {
     const box = $('#login-error');
-    if (!msg) {
-      box.style.display = 'none';
-      return;
-    }
+    if (!msg) { box.style.display = 'none'; return; }
     $('#login-error-text').textContent = msg;
     box.style.display = 'flex';
   };
 
+  let submitting = false;
   $('#login-form').onsubmit = async e => {
     e.preventDefault();
+    if (submitting) return;
     showErr('');
     const login = $('#lg').value.trim().toLowerCase();
     const pw = $('#pw').value;
@@ -152,24 +149,26 @@ export function renderLogin(root, { onLoginSuccess }) {
       return;
     }
 
+    submitting = true;
     const btn = $('#l-btn');
     btn.disabled = true;
-    btn.innerHTML = `${icon('refresh-cw', 16)} Tekshirilmoqda…`;
+    btn.innerHTML = `${icon('refresh-cw', 15)} Tekshirilmoqda…`;
 
     try {
-      const user = await api.loginUser(login, pw);
-      if (!user) {
-        showErr('Login yoki parol noto‘g‘ri. Qayta tekshirib ko‘ring.');
+      const res = await api.login(login, pw);
+      if (!res.ok || !res.user) {
+        showErr(res.error || 'Login yoki parol noto‘g‘ri.');
         btn.disabled = false;
         btn.textContent = 'Kirish';
+        submitting = false;
         return;
       }
-      saveSession(user);
-      await onLoginSuccess(user);
+      await onLoginSuccess(res.user);
     } catch (err) {
       showErr('Tizimga ulanishda xatolik: ' + err.message);
       btn.disabled = false;
       btn.textContent = 'Kirish';
+      submitting = false;
     }
   };
 }
@@ -177,19 +176,19 @@ export function renderLogin(root, { onLoginSuccess }) {
 export function renderPasswordChange(root, { user, forced, onDone, onCancel }) {
   root.innerHTML = `
     <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg)">
-      <div class="auth-card" style="max-width:440px">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px">
-          <div class="kpi-icon primary" style="width:40px;height:40px">${icon('key', 19)}</div>
+      <div class="auth-card" style="max-width:430px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+          <div class="kpi-icon primary" style="width:38px;height:38px">${icon('key', 18)}</div>
           <div>
-            <h2 style="font-size:19px;font-weight:700">${forced ? 'Yangi parol o‘rnating' : 'Parolni yangilash'}</h2>
+            <h2 style="font-size:18px;font-weight:700">${forced ? 'Yangi parol o‘rnating' : 'Parolni yangilash'}</h2>
             <div style="font-size:12.5px;color:var(--text-muted)">${esc(user.name)} (${esc(user.login)})</div>
           </div>
         </div>
 
         ${forced ? `
-          <div class="form-alert info" style="margin-bottom:18px">
+          <div class="form-alert info" style="margin-bottom:16px">
             ${icon('shield', 16)}
-            <span>Xavfsizlik talabiga ko‘ra, tizimga birinchi kirishda vaqtinchalik parolni almashtirishingiz shart.</span>
+            <span>Xavfsizlik talabiga ko‘ra, birinchi kirishda vaqtinchalik parolni almashtirishingiz shart.</span>
           </div>
         ` : ''}
 
@@ -203,7 +202,7 @@ export function renderPasswordChange(root, { user, forced, onDone, onCancel }) {
             <label for="pn">Yangi parol (kamida 8 belgi)</label>
             <input id="pn" class="input" type="password" minlength="8" autocomplete="new-password" required>
             <div class="progress-single" style="margin-top:4px"><i id="pw-strength-bar" style="width:0%"></i></div>
-            <span id="pw-strength-text" style="font-size:11.5px;color:var(--text-muted)">Kamida 8 ta belgi, harf va raqamdan foydalaning</span>
+            <span id="pw-strength-text" style="font-size:11.5px;color:var(--text-muted)">Kamida 8 ta belgi, katta-kichik harf va raqamdan foydalaning</span>
           </div>
 
           <div class="field">
@@ -225,9 +224,7 @@ export function renderPasswordChange(root, { user, forced, onDone, onCancel }) {
     </div>
   `;
 
-  if (!forced && onCancel) {
-    $('#p-cancel').onclick = onCancel;
-  }
+  if (!forced && onCancel) $('#p-cancel').onclick = onCancel;
 
   $('#pn').oninput = () => {
     const val = $('#pn').value;
@@ -239,24 +236,14 @@ export function renderPasswordChange(root, { user, forced, onDone, onCancel }) {
     const bar = $('#pw-strength-bar');
     const txt = $('#pw-strength-text');
     bar.style.width = `${score}%`;
-    if (score < 40) {
-      bar.style.background = 'var(--error)';
-      txt.textContent = 'Zaif parol — kamida 8 belgi kiriting';
-    } else if (score < 75) {
-      bar.style.background = 'var(--warning)';
-      txt.textContent = 'O‘rtacha parol — raqam yoki belgi qo‘shing';
-    } else {
-      bar.style.background = 'var(--success)';
-      txt.textContent = 'Ishonchli parol';
-    }
+    if (score < 40) { bar.style.background = 'var(--error)'; txt.textContent = 'Zaif parol — kamida 8 belgi kiriting'; }
+    else if (score < 75) { bar.style.background = 'var(--warning)'; txt.textContent = 'O‘rtacha parol — raqam yoki belgi qo‘shing'; }
+    else { bar.style.background = 'var(--success)'; txt.textContent = 'Ishonchli parol'; }
   };
 
   const showErr = msg => {
     const box = $('#pw-error');
-    if (!msg) {
-      box.style.display = 'none';
-      return;
-    }
+    if (!msg) { box.style.display = 'none'; return; }
     $('#pw-error-text').textContent = msg;
     box.style.display = 'flex';
   };
@@ -274,21 +261,13 @@ export function renderPasswordChange(root, { user, forced, onDone, onCancel }) {
     const btn = $('#p-btn');
     btn.disabled = true;
     btn.textContent = 'Saqlanmoqda…';
-
     try {
-      const ok = await api.changePassword(user.id, oldPw, np);
-      if (!ok) {
-        showErr('Joriy parol noto‘g‘ri kiritildi.');
-        btn.disabled = false;
-        btn.textContent = 'Saqlash';
-        return;
-      }
+      await api.changePassword(user.id, oldPw, np);
       user.must_change = 0;
-      saveSession(user);
       toast('Parol muvaffaqiyatli yangilandi.', 'success');
       onDone();
     } catch (err) {
-      showErr('Xatolik: ' + err.message);
+      showErr(err.message || 'Parolni yangilashda xatolik.');
       btn.disabled = false;
       btn.textContent = 'Saqlash';
     }

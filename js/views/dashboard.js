@@ -1,9 +1,11 @@
-// Dashboard, Personal Results (My Results) & Deep School Analytics Views
-import { IND, IMAP, SEC, calcScores, getRanking, getDeadlines, extractSubjectLabel } from '../config.js';
+// Role-Specific Dashboards (Director Command Center, IT Admin, Reviewer, Teacher Workspace), My Results & Deep Analytics
+import { IND, IMAP, ROLE, SEC, calcScores, filterEntriesByPeriod, getRanking, getDeadlines, extractSubjectLabel } from '../config.js';
 import { api } from '../api.js';
 import { icon } from '../icons.js';
-import { $, $$, esc, toast, confirmDialog, avatarHtml, badgeStatus, emptyStateHtml, formatDateUz } from '../ui.js';
-import { renderAreaChart, renderLineChart, renderBarChart, renderDonutChart } from '../charts.js';
+import { $, $$, esc, toast, confirmDialog, avatarHtml, badgeStatus, emptyStateHtml, formatDateUz, formatDateTimeTashkent } from '../ui.js';
+import { renderAreaChart, renderLineChart, renderBarChart, renderHorizontalBarChart, renderDonutChart } from '../charts.js';
+
+let myResPeriod = 'all';
 
 function monthKey(dateStr) {
   if (!dateStr || !/^\d{4}-\d{2}/.test(dateStr)) return null;
@@ -21,50 +23,23 @@ function buildMonthlySeries(entries) {
   for (const e of entries) {
     const mk = monthKey(e.date);
     if (!mk) continue;
-    if (!map[mk]) map[mk] = { approvedPts: 0, total: 0, approved: 0, rejected: 0, pending: 0 };
+    if (!map[mk]) map[mk] = { approvedPts: 0, total: 0, approved: 0, rejected: 0 };
     map[mk].total += 1;
     if (e.status === 'approved') {
       map[mk].approved += 1;
       map[mk].approvedPts += Number(e.pts || 0);
     } else if (e.status === 'rejected') {
       map[mk].rejected += 1;
-    } else {
-      map[mk].pending += 1;
     }
   }
   const keys = Object.keys(map).sort().slice(-8);
   return {
-    keys,
     labels: keys.map(formatMonthLabel),
     approvedPts: keys.map(k => Math.round(map[k].approvedPts * 10) / 10),
     totalCounts: keys.map(k => map[k].total),
     approvedCounts: keys.map(k => map[k].approved),
     rejectedCounts: keys.map(k => map[k].rejected)
   };
-}
-
-function calcPeriodDelta(entries) {
-  const now = new Date();
-  const curYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const prevYM = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
-
-  let curApprovedPts = 0;
-  let prevApprovedPts = 0;
-  let curCount = 0;
-  let prevCount = 0;
-
-  for (const e of entries) {
-    const mk = monthKey(e.date);
-    if (mk === curYM) {
-      curCount += 1;
-      if (e.status === 'approved') curApprovedPts += Number(e.pts || 0);
-    } else if (mk === prevYM) {
-      prevCount += 1;
-      if (e.status === 'approved') prevApprovedPts += Number(e.pts || 0);
-    }
-  }
-  return { curApprovedPts: Math.round(curApprovedPts * 10) / 10, prevApprovedPts: Math.round(prevApprovedPts * 10) / 10, curCount, prevCount };
 }
 
 function buildSubjectStats(ranking) {
@@ -77,7 +52,7 @@ function buildSubjectStats(ranking) {
   }
   return Object.values(subjMap)
     .map(s => ({
-      label: s.label,
+      label: s,
       value: Math.round((s.sum / s.count) * 10) / 10,
       sub: `${s.count} nafar pedagog`
     }))
@@ -85,92 +60,89 @@ function buildSubjectStats(ranking) {
     .slice(0, 7);
 }
 
+/* ==========================================================================
+   MAIN ROLE-ROUTER FOR DASHBOARD
+   ========================================================================== */
 export function renderDashboard(el, ctx) {
-  const { me, users, entries } = ctx;
+  const role = ctx.me.role;
+  if (role === 'director') return renderDirectorDashboard(el, ctx);
+  if (role === 'it_admin') return renderItAdminDashboard(el, ctx);
+  if (role === 'reviewer') return renderReviewerDashboard(el, ctx);
+  return renderTeacherDashboard(el, ctx);
+}
+
+/* ==========================================================================
+   1. DIRECTOR COMMAND CENTER
+   ========================================================================== */
+function renderDirectorDashboard(el, ctx) {
+  const { users, entries, monitoring, lastSync } = ctx;
   const ranking = getRanking(users, entries);
-  const isStaff = ['director', 'reviewer', 'it_admin'].includes(me.role);
-  const myEntries = entries.filter(e => e.uid === me.id);
-  const myScore = calcScores(myEntries);
-  const myRank = ranking.find(r => r.id === me.id);
-
-  const avgScore = ranking.length
-    ? Math.round((ranking.reduce((acc, r) => acc + r.T, 0) / ranking.length) * 10) / 10
-    : 0;
-  const topTeacher = ranking[0] || null;
-
-  // Active teachers: ranked teachers with at least 1 entry
-  const uidsWithEntries = new Set(entries.map(e => e.uid));
-  const activeTeachersCount = ranking.filter(r => uidsWithEntries.has(r.id)).length;
-
+  const avgScore = ranking.length ? Math.round((ranking.reduce((s, r) => s + r.T, 0) / ranking.length) * 10) / 10 : 0;
+  const pendingEntries = entries.filter(e => e.status === 'pending');
   const approvedCount = entries.filter(e => e.status === 'approved').length;
-  const pendingCount = entries.filter(e => e.status === 'pending').length;
   const rejectedCount = entries.filter(e => e.status === 'rejected').length;
+  const activeAccounts = users.filter(u => u.active).length;
 
-  const visibleEntriesForCharts = isStaff ? entries : myEntries;
-  const monthly = buildMonthlySeries(visibleEntriesForCharts);
-  const delta = calcPeriodDelta(visibleEntriesForCharts);
+  const monAvail = monitoring?.available;
+  const presence = monitoring?.presence || [];
+  const logins = monitoring?.logins || [];
+  const activities = monitoring?.activities || [];
+
+  const nowMs = Date.now();
+  const onlineNow = monAvail
+    ? presence.filter(p => p.last_seen_at && (nowMs - new Date(p.last_seen_at).getTime()) <= 2 * 60 * 1000).length
+    : null;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayLogins = monAvail
+    ? logins.filter(l => l.success && (l.created_at || '').slice(0, 10) === todayStr).length
+    : null;
+
+  const monthly = buildMonthlySeries(entries);
   const subjectBars = buildSubjectStats(ranking);
+  const deadlines = getDeadlines();
+  const curYear = new Date().getFullYear();
 
-  const ptsDiff = Math.round((delta.curApprovedPts - delta.prevApprovedPts) * 10) / 10;
-  const cntDiff = delta.curCount - delta.prevCount;
-
-  const deltaPill = (diff, unit = '') => {
-    if (diff > 0) return `<span class="delta-pill up">${icon('trending-up', 12)} +${diff}${unit}</span>`;
-    if (diff < 0) return `<span class="delta-pill down">${icon('trending-down', 12)} ${diff}${unit}</span>`;
-    return `<span class="delta-pill flat">O‘zgarishsiz</span>`;
-  };
-
-  const recentFeed = (isStaff ? entries : myEntries).slice(0, 6);
+  // Build daily login trend for last 7 days if monitoring available
+  const loginDaysMap = {};
+  if (monAvail) {
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+      loginDaysMap[d] = { ok: 0, fail: 0 };
+    }
+    for (const l of logins) {
+      const dk = (l.created_at || '').slice(0, 10);
+      if (loginDaysMap[dk]) {
+        if (l.success) loginDaysMap[dk].ok += 1;
+        else loginDaysMap[dk].fail += 1;
+      }
+    }
+  }
+  const loginDayKeys = Object.keys(loginDaysMap);
 
   el.innerHTML = `
     <div class="stack-v">
       <div class="page-header">
         <div>
-          <h1 class="page-title">${isStaff ? 'Boshqaruv paneli' : `Xush kelibsiz, ${esc(me.name.split(' ')[0])}`}</h1>
-          <p class="page-desc">
-            ${isStaff
-              ? 'Norin tuman ixtisoslashtirilgan maktabi pedagoglari samaradorligi va 26-AF reyting tahlili.'
-              : 'Shaxsiy reyting ko‘rsatkichlaringiz va maktab bo‘yicha umumiy dinamika.'}
-          </p>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+            <span class="badge badge-primary">${curYear - 1}–${curYear} o‘quv yili</span>
+            <span style="font-size:12px;color:var(--text-muted)">Yangilangan: ${lastSync ? formatDateTimeTashkent(lastSync) : 'Hozirgina'}</span>
+          </div>
+          <h1 class="page-title">Direktor boshqaruv markazi</h1>
+          <p class="page-desc">Norin tuman ixtisoslashtirilgan maktabi — 26-AF reyting ko‘rsatkichlari va monitoring.</p>
         </div>
         <div class="page-actions">
-          <button type="button" class="btn btn-secondary" id="dash-refresh-btn">${icon('refresh-cw', 15)} Yangilash</button>
-          ${['teacher', 'reviewer'].includes(me.role)
-            ? `<button type="button" class="btn btn-primary" id="dash-add-btn">${icon('plus', 15)} Yutuq qo‘shish</button>`
-            : `<button type="button" class="btn btn-primary" id="dash-rank-btn">${icon('trophy', 15)} Reyting jadvali</button>`}
+          <button type="button" class="btn btn-secondary" id="dir-refresh">${icon('refresh-cw', 15)} Yangilash</button>
+          <button type="button" class="btn btn-secondary" id="dir-reports">${icon('file-text', 15)} Hisobotlar</button>
+          <button type="button" class="btn btn-primary" id="dir-reviews">${icon('check-circle', 15)} Tasdiqlash (${pendingEntries.length})</button>
         </div>
       </div>
 
-      ${me.role === 'teacher' ? `
-        <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;border-color:var(--primary-border)">
-          <div style="display:flex;align-items:center;gap:16px">
-            ${avatarHtml(me.name, 'lg')}
-            <div>
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                <span style="font-size:17px;font-weight:700">${esc(me.name)}</span>
-                <span class="badge badge-primary">${myRank ? `#${myRank.rank}-o‘rin` : 'Reytingdan tashqari'}</span>
-              </div>
-              <div style="font-size:13px;color:var(--text-muted);margin-top:3px">${esc(me.subject || 'Pedagog')} · Tasdiqlangan: <b>${myScore.T} / 130 ball</b></div>
-              <div class="progress-stack" style="width:240px;max-width:100%;margin-top:8px">
-                <i class="seg-a" style="width:${(myScore.A / 130) * 100}%"></i>
-                <i class="seg-b" style="width:${(myScore.B / 130) * 100}%"></i>
-                <i class="seg-c" style="width:${(myScore.C / 130) * 100}%"></i>
-              </div>
-            </div>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button type="button" class="btn btn-secondary" id="dash-my-results">${icon('award', 15)} Batafsil natijalar</button>
-            <button type="button" class="btn btn-secondary" id="dash-my-port">${icon('printer', 15)} A4 Portfolio</button>
-          </div>
-        </div>
-      ` : ''}
-
-      <!-- 4 Real KPI Cards -->
+      <!-- Primary KPIs -->
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-top">
             <span class="kpi-label">Jami pedagoglar</span>
-            <span class="kpi-icon primary">${icon('users', 17)}</span>
+            <span class="kpi-icon primary">${icon('users', 16)}</span>
           </div>
           <div class="kpi-value-row">
             <span class="kpi-value" data-count="${ranking.length}">0</span>
@@ -178,120 +150,118 @@ export function renderDashboard(el, ctx) {
           </div>
           <div class="kpi-foot">
             <span>Reytingda ishtirok etmoqda</span>
-            <span class="badge badge-neutral">${users.filter(u => u.active).length} faol xodim</span>
+            <span class="badge badge-neutral">${activeAccounts} faol xodim</span>
           </div>
         </div>
 
         <div class="kpi-card">
           <div class="kpi-top">
             <span class="kpi-label">O‘rtacha reyting</span>
-            <span class="kpi-icon">${icon('bar-chart-3', 17)}</span>
+            <span class="kpi-icon">${icon('bar-chart-3', 16)}</span>
           </div>
           <div class="kpi-value-row">
             <span class="kpi-value" data-count="${avgScore}" data-decimals="1">0</span>
             <span class="kpi-unit">/ 130 ball</span>
           </div>
           <div class="kpi-foot">
-            <span>Maktab ko‘rsatkichi: ${Math.round((avgScore / 130) * 100)}%</span>
-            ${deltaPill(ptsDiff, ' ball')}
+            <span>Samaradorlik: ${Math.round((avgScore / 130) * 100)}%</span>
+            <span class="badge badge-success">${approvedCount} tasdiqlangan</span>
           </div>
         </div>
 
         <div class="kpi-card">
           <div class="kpi-top">
-            <span class="kpi-label">Eng yuqori natija</span>
-            <span class="kpi-icon success">${icon('trophy', 17)}</span>
+            <span class="kpi-label">Tasdiqlash kutmoqda</span>
+            <span class="kpi-icon warning">${icon('clock', 16)}</span>
           </div>
           <div class="kpi-value-row">
-            <span class="kpi-value" data-count="${topTeacher ? topTeacher.T : 0}" data-decimals="1">0</span>
-            <span class="kpi-unit">ball</span>
+            <span class="kpi-value" data-count="${pendingEntries.length}">0</span>
+            <span class="kpi-unit">ta ariza</span>
           </div>
           <div class="kpi-foot">
-            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${topTeacher ? esc(topTeacher.name) : 'Hozircha natija yo‘q'}</span>
+            <span>Rad etilgan: ${rejectedCount} ta</span>
+            ${pendingEntries.length > 0 ? '<span class="badge badge-warning">Tekshiruv zarur</span>' : '<span class="badge badge-success">Navbat toza</span>'}
           </div>
         </div>
 
         <div class="kpi-card">
           <div class="kpi-top">
-            <span class="kpi-label">Faol pedagoglar</span>
-            <span class="kpi-icon warning">${icon('user-check', 17)}</span>
+            <span class="kpi-label">Faol foydalanuvchilar</span>
+            <span class="kpi-icon success">${icon('radio', 16)}</span>
           </div>
           <div class="kpi-value-row">
-            <span class="kpi-value" data-count="${activeTeachersCount}">0</span>
-            <span class="kpi-unit">/ ${ranking.length}</span>
+            <span class="kpi-value">${monAvail ? onlineNow : activeAccounts}</span>
+            <span class="kpi-unit">${monAvail ? 'hozir onlayn' : 'faol hisob'}</span>
           </div>
           <div class="kpi-foot">
-            <span>Yutuq kiritgan pedagoglar</span>
-            ${deltaPill(cntDiff, ' ariza')}
+            <span>${monAvail ? `Bugungi kirishlar: ${todayLogins}` : 'Monitoring migratsiyadan so‘ng faollashadi'}</span>
           </div>
         </div>
       </div>
 
-      <!-- Charts Row 1: Area & Line -->
+      <!-- Main Charts -->
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
             <div>
-              <h3 class="card-title">Oylik reyting dinamikasi</h3>
-              <p class="card-subtitle">${isStaff ? 'Tasdiqlangan ballar o‘sishi (oylar kesimida)' : 'Sizning tasdiqlangan ballaringiz dinamikasi'}</p>
+              <h3 class="card-title">Yutuqlar dinamikasi</h3>
+              <p class="card-subtitle">Tasdiqlangan ballar o‘sishi (yutuq sanasi bo‘yicha)</p>
             </div>
-            <span class="badge badge-primary">${delta.curApprovedPts} ball (joriy oy)</span>
           </div>
-          <div id="chart-area"></div>
+          <div id="dir-area-chart"></div>
         </div>
 
         <div class="card">
           <div class="card-header">
             <div>
-              <h3 class="card-title">Baholash faolligi dinamikasi</h3>
-              <p class="card-subtitle">Topshirilgan, tasdiqlangan va rad etilgan arizalar</p>
+              <h3 class="card-title">Fanlar bo‘yicha o‘rtacha natijalar</h3>
+              <p class="card-subtitle">Fan kafedralari kesimida o‘rtacha reyting</p>
             </div>
           </div>
-          <div id="chart-line"></div>
+          <div id="dir-bar-chart"></div>
         </div>
       </div>
 
-      <!-- Charts Row 2: Bar & Donut -->
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h3 class="card-title">Yutuqlar holati taqsimoti</h3>
+              <p class="card-subtitle">Tasdiqlangan, tekshiruvdagi va rad etilgan arizalar</p>
+            </div>
+          </div>
+          <div id="dir-donut-chart"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h3 class="card-title">${monAvail ? 'So‘nggi 7 kunlik kirishlar dinamikasi' : 'Arizalar faolligi dinamikasi'}</h3>
+              <p class="card-subtitle">${monAvail ? 'Muvaffaqiyatli va rad etilgan login urinishlari' : 'Topshirilgan va tasdiqlangan arizalar'}</p>
+            </div>
+          </div>
+          <div id="dir-line-chart"></div>
+        </div>
+      </div>
+
+      <!-- Lower Command Sections -->
       <div class="grid-asymmetric">
         <div class="card">
           <div class="card-header">
             <div>
-              <h3 class="card-title">Fanlar bo‘yicha o‘rtacha reyting</h3>
-              <p class="card-subtitle">Har bir fan yo‘nalishidagi o‘rtacha to‘plangan ball</p>
+              <h3 class="card-title">Top pedagoglar</h3>
+              <p class="card-subtitle">Reyting yetakchilari</p>
             </div>
-          </div>
-          <div id="chart-bar"></div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <h3 class="card-title">Baholash natijalari</h3>
-              <p class="card-subtitle">${isStaff ? 'Maktab bo‘yicha barcha arizalar holati' : 'Shaxsiy arizalaringiz holati'}</p>
-            </div>
-          </div>
-          <div id="chart-donut"></div>
-        </div>
-      </div>
-
-      <!-- Bottom Row: Top Teachers & Recent Activity -->
-      <div class="grid-asymmetric">
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <h3 class="card-title">Eng yaxshi pedagoglar</h3>
-              <p class="card-subtitle">26-AF reyting jadvalidagi yetakchi beshlik</p>
-            </div>
-            <button type="button" class="btn btn-ghost btn-sm" id="dash-view-all-rank">Barchasi ${icon('chevron-right', 14)}</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="dir-all-rank">Barchasi ${icon('chevron-right', 14)}</button>
           </div>
           ${ranking.length === 0
-            ? emptyStateHtml({ iconName: 'trophy', title: 'Reyting jadvali bo‘sh', desc: 'Hozircha reytingga kiritilgan pedagoglar mavjud emas.' })
+            ? emptyStateHtml({ iconName: 'trophy', title: 'Reyting bo‘sh', desc: 'Hali reytingdagi pedagoglar kiritilmagan.' })
             : `
-              <div style="display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;flex-direction:column;gap:8px">
                 ${ranking.slice(0, 5).map(r => `
-                  <div class="card-interactive" data-open-profile="${r.id}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;cursor:pointer">
-                    <div style="display:flex;align-items:center;gap:12px;min-width:0">
-                      <span class="rank-badge ${r.rank === 1 ? 'r1' : (r.rank === 2 ? 'r2' : 'r3')}">#${r.rank}</span>
+                  <div class="card-interactive" data-open-prof="${r.id}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;cursor:pointer">
+                    <div style="display:flex;align-items:center;gap:10px;min-width:0">
+                      <span class="rank-badge ${r.rank <= 3 ? `r${r.rank}` : 'rn'}">#${r.rank}</span>
                       ${avatarHtml(r.name, 'sm')}
                       <div style="min-width:0">
                         <div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name)}</div>
@@ -299,7 +269,7 @@ export function renderDashboard(el, ctx) {
                       </div>
                     </div>
                     <div style="text-align:right;flex-shrink:0">
-                      <div style="font-size:15px;font-weight:700;color:var(--primary);font-variant-numeric:tabular-nums">${r.T} ball</div>
+                      <div style="font-size:14.5px;font-weight:700;color:var(--primary)">${r.T} ball</div>
                       <div style="font-size:11px;color:var(--text-muted)">A:${r.A} · B:${r.B} · C:${r.C}</div>
                     </div>
                   </div>
@@ -308,103 +278,439 @@ export function renderDashboard(el, ctx) {
             `}
         </div>
 
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <h3 class="card-title">So‘nggi faoliyatlar</h3>
-              <p class="card-subtitle">${isStaff ? 'Oxirgi kiritilgan va tekshirilgan yutuqlar' : 'Oxirgi yutuq va qarorlaringiz'}</p>
+        <div class="stack-v">
+          <div class="card card-compact">
+            <div class="card-header" style="margin-bottom:10px">
+              <div>
+                <h3 class="card-title">${monAvail ? 'So‘nggi harakatlar' : 'Tasdiqlash kutayotgan yutuqlar'}</h3>
+                <p class="card-subtitle">${monAvail ? 'Tizimdagi oxirgi qayd etilgan hodisalar' : 'Eng yangi kutilayotgan arizalar'}</p>
+              </div>
+              ${monAvail ? `<button type="button" class="btn btn-ghost btn-sm" id="dir-mon-btn">Monitoring ${icon('chevron-right', 14)}</button>` : ''}
+            </div>
+            ${monAvail && activities.length > 0
+              ? `
+                <div style="display:flex;flex-direction:column;gap:8px">
+                  ${activities.slice(0, 6).map(a => `
+                    <div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+                      <div style="min-width:0">
+                        <b>${esc(a.actor_name || 'Tizim')}</b> · <span style="color:var(--text-2)">${esc(a.action)}</span>
+                        <div style="font-size:11.5px;color:var(--text-muted)">${formatDateTimeTashkent(a.created_at)}</div>
+                      </div>
+                      <span class="badge ${a.outcome === 'failed' ? 'badge-error' : 'badge-neutral'}">${esc(a.outcome)}</span>
+                    </div>
+                  `).join('')}
+                </div>
+              `
+              : (pendingEntries.length > 0
+                ? `
+                  <div style="display:flex;flex-direction:column;gap:8px">
+                    ${pendingEntries.slice(0, 5).map(e => {
+                      const u = users.find(x => x.id === e.uid);
+                      return `
+                        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+                          <div style="min-width:0">
+                            <div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(u?.name || 'Pedagog')}</div>
+                            <div style="font-size:11.5px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.ind}. ${esc(IMAP[e.ind]?.name || '')}</div>
+                          </div>
+                          <span class="badge badge-warning">+${e.pts}</span>
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+                `
+                : `<p style="margin:0;font-size:13px;color:var(--text-muted)">Hozircha kutayotgan yutuqlar yo‘q.</p>`)}
+          </div>
+
+          <div class="card card-compact">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+              <div class="kpi-icon primary">${icon('calendar', 16)}</div>
+              <div style="font-weight:600;font-size:14px">Yaqinlashayotgan muddatlar</div>
+            </div>
+            <div style="font-size:12.5px;color:var(--text-2);line-height:1.6">
+              <div>Mas’ullarga topshirish: <b>${esc(deadlines.d20Label)}</b> (${deadlines.n20} kun qoldi)</div>
+              <div>Yakuniy hisobot (25-sana): <b>${esc(deadlines.d25Label)}</b> (${deadlines.n25} kun qoldi)</div>
             </div>
           </div>
-          ${recentFeed.length === 0
-            ? emptyStateHtml({ iconName: 'clock', title: 'Faoliyatlar mavjud emas', desc: 'Hali birorta yutuq kiritilmagan.' })
-            : `
-              <div style="display:flex;flex-direction:column;gap:12px">
-                ${recentFeed.map(e => {
-                  const owner = users.find(u => u.id === e.uid);
-                  const ind = IMAP[e.ind];
-                  return `
-                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
-                      <div style="min-width:0">
-                        <div style="font-size:13px;font-weight:600;color:var(--text)">${esc(owner ? owner.name : 'Pedagog')} · <span style="color:var(--primary)">+${e.pts} ball</span></div>
-                        <div style="font-size:12px;color:var(--text-muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(ind ? ind.name : '')} — ${esc(e.type)}</div>
-                        <div style="font-size:11.5px;color:var(--text-subtle);margin-top:2px">${formatDateUz(e.date)}</div>
-                      </div>
-                      ${badgeStatus(e.status)}
-                    </div>
-                  `;
-                }).join('')}
-              </div>
-            `}
         </div>
       </div>
     </div>
   `;
 
-  // Render interactive SVG charts
-  renderAreaChart($('#chart-area'), {
-    labels: monthly.labels,
-    values: monthly.approvedPts,
-    unit: 'ball'
-  });
-
-  renderLineChart($('#chart-line'), {
-    labels: monthly.labels,
-    series: [
-      { name: 'Jami arizalar', values: monthly.totalCounts, color: 'var(--primary)' },
-      { name: 'Tasdiqlangan', values: monthly.approvedCounts, color: 'var(--success)' },
-      { name: 'Rad etilgan', values: monthly.rejectedCounts, color: 'var(--error)' }
-    ]
-  });
-
-  renderBarChart($('#chart-bar'), {
-    items: subjectBars,
-    unit: 'o‘rtacha ball'
-  });
-
-  const statusData = isStaff
-    ? { a: approvedCount, p: pendingCount, r: rejectedCount }
-    : {
-        a: myEntries.filter(e => e.status === 'approved').length,
-        p: myEntries.filter(e => e.status === 'pending').length,
-        r: myEntries.filter(e => e.status === 'rejected').length
-      };
-
-  renderDonutChart($('#chart-donut'), {
-    centerValue: statusData.a + statusData.p + statusData.r,
+  renderAreaChart($('#dir-area-chart'), { labels: monthly.labels, values: monthly.approvedPts, unit: 'ball' });
+  renderBarChart($('#dir-bar-chart'), { items: subjectBars, unit: 'o‘rtacha ball' });
+  renderDonutChart($('#dir-donut-chart'), {
+    centerValue: approvedCount + pendingEntries.length + rejectedCount,
     centerLabel: 'Jami ariza',
-    unit: 'ta ariza',
+    unit: 'ta',
     slices: [
-      { label: 'Tasdiqlangan', value: statusData.a, color: 'var(--success)' },
-      { label: 'Tekshiruvda', value: statusData.p, color: 'var(--warning)' },
-      { label: 'Rad etilgan', value: statusData.r, color: 'var(--error)' }
+      { label: 'Tasdiqlangan', value: approvedCount, color: 'var(--success)' },
+      { label: 'Kutilmoqda', value: pendingEntries.length, color: 'var(--warning)' },
+      { label: 'Rad etilgan', value: rejectedCount, color: 'var(--error)' }
     ]
   });
 
-  // Bind buttons
-  $('#dash-refresh-btn').onclick = () => ctx.refresh();
-  const addBtn = $('#dash-add-btn');
-  if (addBtn) addBtn.onclick = () => ctx.navigate('add_entry');
-  const rankBtn = $('#dash-rank-btn');
-  if (rankBtn) rankBtn.onclick = () => ctx.navigate('ranking');
-  $('#dash-view-all-rank').onclick = () => ctx.navigate('ranking');
+  if (monAvail) {
+    renderLineChart($('#dir-line-chart'), {
+      labels: loginDayKeys.map(k => k.slice(5)),
+      series: [
+        { name: 'Muvaffaqiyatli', values: loginDayKeys.map(k => loginDaysMap[k].ok), color: 'var(--success)' },
+        { name: 'Muvaffaqiyatsiz', values: loginDayKeys.map(k => loginDaysMap[k].fail), color: 'var(--error)' }
+      ]
+    });
+  } else {
+    renderLineChart($('#dir-line-chart'), {
+      labels: monthly.labels,
+      series: [
+        { name: 'Jami arizalar', values: monthly.totalCounts, color: 'var(--primary)' },
+        { name: 'Tasdiqlangan', values: monthly.approvedCounts, color: 'var(--success)' },
+        { name: 'Rad etilgan', values: monthly.rejectedCounts, color: 'var(--error)' }
+      ]
+    });
+  }
 
-  const myResBtn = $('#dash-my-results');
-  if (myResBtn) myResBtn.onclick = () => ctx.navigate('my_results');
-  const myPortBtn = $('#dash-my-port');
-  if (myPortBtn) myPortBtn.onclick = () => ctx.openPortfolioPrint(me.id);
-
-  $$('[data-open-profile]').forEach(card => {
-    card.onclick = () => ctx.openProfile(Number(card.dataset.openProfile));
-  });
+  $('#dir-refresh').onclick = () => ctx.refresh();
+  $('#dir-reports').onclick = () => ctx.navigate('reports');
+  $('#dir-reviews').onclick = () => ctx.navigate('reviews');
+  $('#dir-all-rank').onclick = () => ctx.navigate('ranking');
+  const monBtn = $('#dir-mon-btn');
+  if (monBtn) monBtn.onclick = () => ctx.navigate('monitoring');
+  $$('[data-open-prof]').forEach(c => { c.onclick = () => ctx.openProfile(Number(c.dataset.openProf)); });
 }
 
 /* ==========================================================================
-   MENING NATIJAM (Personal Results & Entries)
+   2. IT ADMIN TECHNICAL DASHBOARD
    ========================================================================== */
-export function renderMyResults(el, ctx) {
+function renderItAdminDashboard(el, ctx) {
+  const { users, entries, monitoring, lastSync } = ctx;
+  const activeCount = users.filter(u => u.active).length;
+  const inactiveCount = users.length - activeCount;
+  const teachersCount = users.filter(u => u.role === 'teacher').length;
+  const mustChangeCount = users.filter(u => u.active && u.must_change).length;
+  const ranking = getRanking(users, entries);
+  const monAvail = monitoring?.available;
+  const logins = monitoring?.logins || [];
+
+  el.innerHTML = `
+    <div class="stack-v">
+      <div class="page-header">
+        <div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:3px">Texnik boshqaruv · Oxirgi yangilanish: ${lastSync ? formatDateTimeTashkent(lastSync) : 'Hozirgina'}</div>
+          <h1 class="page-title">IT mutaxassis boshqaruv paneli</h1>
+          <p class="page-desc">Akkauntlar holati, ommaviy import va tizimga kirish monitoringi.</p>
+        </div>
+        <div class="page-actions">
+          <button type="button" class="btn btn-secondary" id="it-refresh">${icon('refresh-cw', 15)} Yangilash</button>
+          <button type="button" class="btn btn-primary" id="it-users-btn">${icon('user-plus', 15)} Pedagoglarni yuklash</button>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-top"><span class="kpi-label">Jami foydalanuvchilar</span><span class="kpi-icon primary">${icon('users', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value" data-count="${users.length}">0</span><span class="kpi-unit">nafar</span></div>
+          <div class="kpi-foot"><span>${teachersCount} nafar pedagog</span></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-top"><span class="kpi-label">Faol akkauntlar</span><span class="kpi-icon success">${icon('user-check', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value" data-count="${activeCount}">0</span><span class="kpi-unit">ta</span></div>
+          <div class="kpi-foot"><span>Faolsiz: ${inactiveCount} ta</span></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-top"><span class="kpi-label">Parol almashtirishi kerak</span><span class="kpi-icon warning">${icon('key', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value" data-count="${mustChangeCount}">0</span><span class="kpi-unit">ta hisob</span></div>
+          <div class="kpi-foot"><span>Birinchi kirish kutilmoqda</span></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-top"><span class="kpi-label">Reytingda qatnashuvchilar</span><span class="kpi-icon">${icon('trophy', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value" data-count="${ranking.length}">0</span><span class="kpi-unit">nafar</span></div>
+          <div class="kpi-foot"><span>Faol va reytingga ulangan</span></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div><h3 class="card-title">Rollar bo‘yicha taqsimot</h3><p class="card-subtitle">Tizimdagi barcha akkauntlar tarkibi</p></div>
+          </div>
+          <div id="it-role-donut"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h3 class="card-title">So‘nggi kirishlar</h3>
+              <p class="card-subtitle">${monAvail ? 'Oxirgi autentifikatsiya hodisalari' : 'Monitoring jadvali V4 migratsiyadan so‘ng ishlaydi'}</p>
+            </div>
+            ${monAvail ? `<button type="button" class="btn btn-ghost btn-sm" id="it-mon-btn">Batafsil ${icon('chevron-right', 14)}</button>` : ''}
+          </div>
+          ${monAvail && logins.length
+            ? `<div style="display:flex;flex-direction:column;gap:8px">
+                ${logins.slice(0, 6).map(l => `
+                  <div style="display:flex;justify-content:space-between;font-size:12.5px;padding-bottom:8px;border-bottom:1px solid var(--border)">
+                    <div><b>${esc(l.user_name || l.login)}</b> · <span style="color:var(--text-muted)">${esc(l.device_type)} / ${esc(l.browser)}</span></div>
+                    <span class="badge ${l.success ? 'badge-success' : 'badge-error'}">${l.success ? 'Muvaffaqiyatli' : 'Xato'}</span>
+                  </div>
+                `).join('')}
+              </div>`
+            : emptyStateHtml({ iconName: 'history', title: 'Kirish tarixi mavjud emas', desc: 'Yangi loginlar qayd etilishi bilan shu yerda ko‘rinadi.' })}
+        </div>
+      </div>
+    </div>
+  `;
+
+  renderDonutChart($('#it-role-donut'), {
+    centerValue: users.length,
+    centerLabel: 'Jami hisob',
+    unit: 'ta',
+    slices: [
+      { label: ROLE.teacher, value: users.filter(u => u.role === 'teacher').length, color: 'var(--primary)' },
+      { label: ROLE.reviewer, value: users.filter(u => u.role === 'reviewer').length, color: 'var(--sec-b)' },
+      { label: ROLE.it_admin, value: users.filter(u => u.role === 'it_admin').length, color: 'var(--warning)' },
+      { label: ROLE.director, value: users.filter(u => u.role === 'director').length, color: 'var(--success)' }
+    ]
+  });
+
+  $('#it-refresh').onclick = () => ctx.refresh();
+  $('#it-users-btn').onclick = () => ctx.navigate('admin');
+  const mb = $('#it-mon-btn');
+  if (mb) mb.onclick = () => ctx.navigate('monitoring');
+}
+
+/* ==========================================================================
+   3. REVIEWER DASHBOARD
+   ========================================================================== */
+function renderReviewerDashboard(el, ctx) {
+  const { me, users, entries } = ctx;
+  const myQueue = entries.filter(e => e.status === 'pending' && IMAP[e.ind]?.resp.includes(me.name));
+  const myEntries = entries.filter(e => e.uid === me.id);
+  const myScore = calcScores(myEntries);
+  const ranking = getRanking(users, entries);
+  const myRank = ranking.find(r => r.id === me.id);
+  const deadlines = getDeadlines();
+
+  el.innerHTML = `
+    <div class="stack-v">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Mas’ul baholovchi paneli</h1>
+          <p class="page-desc">${esc(me.name)} · Sizga biriktirilgan mezonlar bo‘yicha tasdiqlash navbati va shaxsiy natijalar.</p>
+        </div>
+        <div class="page-actions">
+          <button type="button" class="btn btn-secondary" id="rv-add">${icon('plus', 15)} Yutuq qo‘shish</button>
+          <button type="button" class="btn btn-primary" id="rv-queue">${icon('check-circle', 15)} Tasdiqlash (${myQueue.length})</button>
+        </div>
+      </div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-top"><span class="kpi-label">Sizning navbatingiz</span><span class="kpi-icon warning">${icon('clock', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value" data-count="${myQueue.length}">0</span><span class="kpi-unit">ta ariza</span></div>
+          <div class="kpi-foot"><span>Tekshirishni kutmoqda</span></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-top"><span class="kpi-label">Shaxsiy ball</span><span class="kpi-icon primary">${icon('award', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value" data-count="${myScore.T}" data-decimals="1">0</span><span class="kpi-unit">/ 130</span></div>
+          <div class="kpi-foot"><span>${myRank ? `#${myRank.rank}-o‘rin` : 'Reytingdan tashqari'}</span></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-top"><span class="kpi-label">Topshirish muddati</span><span class="kpi-icon">${icon('calendar', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value">${deadlines.n20}</span><span class="kpi-unit">kun qoldi</span></div>
+          <div class="kpi-foot"><span>${esc(deadlines.d20Label)}</span></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-top"><span class="kpi-label">Tasdiqlangan jami</span><span class="kpi-icon success">${icon('check-circle', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value" data-count="${entries.filter(e => e.status === 'approved' && IMAP[e.ind]?.resp.includes(me.name)).length}">0</span><span class="kpi-unit">ta yutuq</span></div>
+          <div class="kpi-foot"><span>Mezonlaringiz bo‘yicha</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div><h3 class="card-title">Navbatdagi arizalar</h3><p class="card-subtitle">Tezkor ko‘rib chiqish uchun oxirgi yuborilgan yutuqlar</p></div>
+          <button type="button" class="btn btn-ghost btn-sm" id="rv-open-all">Barchasini ochish ${icon('chevron-right', 14)}</button>
+        </div>
+        ${myQueue.length === 0
+          ? emptyStateHtml({ iconName: 'check-circle', title: 'Navbat bo‘sh', desc: 'Sizga biriktirilgan indikatorlarda kutayotgan arizalar yo‘q.' })
+          : `<div style="display:flex;flex-direction:column;gap:8px">
+              ${myQueue.slice(0, 6).map(e => {
+                const owner = users.find(u => u.id === e.uid);
+                return `
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px">
+                    <div style="min-width:0">
+                      <div style="font-weight:600;font-size:13.5px">${esc(owner?.name || 'Pedagog')} · <span style="color:var(--primary)">+${e.pts} ball</span></div>
+                      <div style="font-size:12px;color:var(--text-muted)">${e.ind}. ${esc(IMAP[e.ind]?.name || '')} — ${esc(e.type)}</div>
+                    </div>
+                    <span class="badge badge-warning">${formatDateUz(e.date)}</span>
+                  </div>
+                `;
+              }).join('')}
+            </div>`}
+      </div>
+    </div>
+  `;
+
+  $('#rv-add').onclick = () => ctx.navigate('add_entry');
+  $('#rv-queue').onclick = () => ctx.navigate('reviews');
+  $('#rv-open-all').onclick = () => ctx.navigate('reviews');
+}
+
+/* ==========================================================================
+   4. TEACHER PERSONAL WORKSPACE
+   ========================================================================== */
+function renderTeacherDashboard(el, ctx) {
   const { me, users, entries } = ctx;
   const myEntries = entries.filter(e => e.uid === me.id);
   const k = calcScores(myEntries);
+  const ranking = getRanking(users, entries);
+  const myRank = ranking.find(r => r.id === me.id);
+  const deadlines = getDeadlines();
+
+  const waitSum = sec => IND.filter(i => i.sec === sec).reduce((s, i) => s + (k.by[i.id]?.wait || 0), 0);
+  const waitA = Math.round(waitSum('A') * 10) / 10;
+  const waitB = Math.round(waitSum('B') * 10) / 10;
+  const waitC = Math.round(waitSum('C') * 10) / 10;
+  const remA = Math.max(0, Math.round((50 - k.A) * 10) / 10);
+  const remB = Math.max(0, Math.round((30 - k.B) * 10) / 10);
+  const remC = Math.max(0, Math.round((50 - k.C) * 10) / 10);
+
+  // Growth opportunities: indicators with remaining potential
+  const opportunities = IND
+    .map(i => {
+      const st = k.by[i.id] || { ok: 0, wait: 0 };
+      const remaining = Math.max(0, Math.round((i.max - st.ok - st.wait) * 10) / 10);
+      return { ...i, ok: st.ok, wait: st.wait, remaining };
+    })
+    .filter(x => x.remaining > 0)
+    .sort((a, b) => b.remaining - a.remaining)
+    .slice(0, 4);
+
+  const monthly = buildMonthlySeries(myEntries);
+
+  el.innerHTML = `
+    <div class="stack-v">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Xush kelibsiz, ${esc(me.name)}</h1>
+          <p class="page-desc">${esc(me.subject || 'Pedagog')} · Shaxsiy rivojlanish va 26-AF reyting markazi.</p>
+        </div>
+        <div class="page-actions">
+          <button type="button" class="btn btn-secondary" id="td-port">${icon('printer', 15)} A4 Portfolio</button>
+          <button type="button" class="btn btn-primary" id="td-add">${icon('plus', 15)} Yutuq qo‘shish</button>
+        </div>
+      </div>
+
+      <!-- Hero Summary Card -->
+      <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:16px">
+          ${avatarHtml(me.name, 'xl')}
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="font-size:18px;font-weight:700">${esc(me.name)}</span>
+              <span class="badge badge-primary">${myRank ? `#${myRank.rank}-o‘rin (${ranking.length} tadan)` : 'Reytingdan tashqari'}</span>
+            </div>
+            <div style="font-size:13px;color:var(--text-muted);margin-top:3px">Tasdiqlangan rasmiy ball: <b>${k.T} / 130 ball</b> (${Math.round((k.T / 130) * 100)}%)</div>
+            <div class="progress-stack" style="width:280px;max-width:100%;margin-top:10px">
+              <i class="seg-a" style="width:${(k.A / 130) * 100}%"></i>
+              <i class="seg-b" style="width:${(k.B / 130) * 100}%"></i>
+              <i class="seg-c" style="width:${(k.C / 130) * 100}%"></i>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap">
+          <div><div style="font-size:11.5px;color:var(--text-muted)">Tasdiqlangan</div><div style="font-size:20px;font-weight:700;color:var(--success)">${myEntries.filter(e => e.status === 'approved').length}</div></div>
+          <div><div style="font-size:11.5px;color:var(--text-muted)">Tekshiruvda</div><div style="font-size:20px;font-weight:700;color:var(--warning)">${myEntries.filter(e => e.status === 'pending').length}</div></div>
+          <div><div style="font-size:11.5px;color:var(--text-muted)">Rad etilgan</div><div style="font-size:20px;font-weight:700;color:var(--error)">${myEntries.filter(e => e.status === 'rejected').length}</div></div>
+        </div>
+      </div>
+
+      <!-- A, B, C Detailed Breakdown -->
+      <div class="grid-3">
+        <div class="card card-compact">
+          <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;font-weight:600;color:var(--sec-a)">A bo‘lim</span><span class="badge badge-neutral">Maks: 50</span></div>
+          <div style="font-size:26px;font-weight:700;margin:6px 0">${k.A} <small style="font-size:13px;color:var(--text-muted)">ball</small></div>
+          <div class="progress-single"><i style="width:${(k.A / 50) * 100}%;background:var(--sec-a)"></i></div>
+          <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-muted);margin-top:8px">
+            <span>Kutilmoqda: <b>+${waitA}</b></span>
+            <span>Qolgan imkoniyat: <b>${remA}</b></span>
+          </div>
+        </div>
+
+        <div class="card card-compact">
+          <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;font-weight:600;color:var(--sec-b)">B bo‘lim</span><span class="badge badge-neutral">Maks: 30</span></div>
+          <div style="font-size:26px;font-weight:700;margin:6px 0">${k.B} <small style="font-size:13px;color:var(--text-muted)">ball</small></div>
+          <div class="progress-single"><i style="width:${(k.B / 30) * 100}%;background:var(--sec-b)"></i></div>
+          <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-muted);margin-top:8px">
+            <span>Kutilmoqda: <b>+${waitB}</b></span>
+            <span>Qolgan imkoniyat: <b>${remB}</b></span>
+          </div>
+        </div>
+
+        <div class="card card-compact">
+          <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;font-weight:600;color:var(--sec-c)">C bo‘lim</span><span class="badge badge-neutral">Maks: 50</span></div>
+          <div style="font-size:26px;font-weight:700;margin:6px 0">${k.C} <small style="font-size:13px;color:var(--text-muted)">ball</small></div>
+          <div class="progress-single"><i style="width:${(k.C / 50) * 100}%;background:var(--sec-c)"></i></div>
+          <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-muted);margin-top:8px">
+            <span>Kutilmoqda: <b>+${waitC}</b></span>
+            <span>Qolgan imkoniyat: <b>${remC}</b></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-asymmetric">
+        <div class="card">
+          <div class="card-header">
+            <div><h3 class="card-title">Shaxsiy natijalar dinamikasi</h3><p class="card-subtitle">Tasdiqlangan ballaringiz o‘sish grafigi</p></div>
+            <button type="button" class="btn btn-ghost btn-sm" id="td-my-res">Barchasi ${icon('chevron-right', 14)}</button>
+          </div>
+          <div id="td-area-chart"></div>
+        </div>
+
+        <div class="stack-v">
+          <div class="card card-compact">
+            <div class="card-header" style="margin-bottom:10px">
+              <div><h3 class="card-title">Rivojlanish imkoniyatlari</h3><p class="card-subtitle">Ball to‘plash mumkin bo‘lgan mezonlar</p></div>
+            </div>
+            ${opportunities.length === 0
+              ? `<p style="margin:0;font-size:13px;color:var(--success)">Barcha mezonlar bo‘yicha maksimal ball to‘plangan!</p>`
+              : `<div style="display:flex;flex-direction:column;gap:8px">
+                  ${opportunities.map(o => `
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:var(--bg-subtle);font-size:12.5px">
+                      <div style="min-width:0"><b style="color:var(--primary)">${o.sec}-${o.id}.</b> ${esc(o.name)}</div>
+                      <span class="badge badge-neutral">+${o.remaining} ball</span>
+                    </div>
+                  `).join('')}
+                </div>`}
+          </div>
+
+          <div class="card card-compact">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+              <div class="kpi-icon primary">${icon('calendar', 16)}</div>
+              <div style="font-weight:600;font-size:13.5px">Topshirish muddatlari</div>
+            </div>
+            <div style="font-size:12.5px;color:var(--text-muted);line-height:1.55">
+              Mas’ullarga: <b>${esc(deadlines.d20Label)}</b> (${deadlines.n20} kun)<br>
+              Yakuniy hisobot: <b>${esc(deadlines.d25Label)}</b> (${deadlines.n25} kun)
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  renderAreaChart($('#td-area-chart'), { labels: monthly.labels, values: monthly.approvedPts, unit: 'ball' });
+  $('#td-add').onclick = () => ctx.navigate('add_entry');
+  $('#td-port').onclick = () => ctx.openPortfolioPrint(me.id);
+  $('#td-my-res').onclick = () => ctx.navigate('my_results');
+}
+
+/* ==========================================================================
+   MENING NATIJAM (Personal Results with Period Filter)
+   ========================================================================== */
+export function renderMyResults(el, ctx) {
+  const { me, users, entries } = ctx;
+  const allMyEntries = entries.filter(e => e.uid === me.id);
+  const filteredEntries = filterEntriesByPeriod(allMyEntries, myResPeriod);
+  const k = calcScores(filteredEntries);
   const ranking = getRanking(users, entries);
   const myRank = ranking.find(r => r.id === me.id);
   const deadlines = getDeadlines();
@@ -414,117 +720,82 @@ export function renderMyResults(el, ctx) {
       <div class="page-header">
         <div>
           <h1 class="page-title">Mening natijam</h1>
-          <p class="page-desc">${esc(me.name)} · ${esc(me.subject || 'Pedagog')}</p>
+          <p class="page-desc">${esc(me.name)} · ${esc(me.subject || 'Pedagog')} · Rasmiy reyting: ${myRank ? `#${myRank.rank}` : '—'}</p>
         </div>
         <div class="page-actions">
+          <select id="mr-period" class="input" style="width:auto;min-width:155px" aria-label="Davr filtri">
+            <option value="all" ${myResPeriod === 'all' ? 'selected' : ''}>Barcha davr</option>
+            <option value="this_month" ${myResPeriod === 'this_month' ? 'selected' : ''}>Joriy oy</option>
+            <option value="prev_month" ${myResPeriod === 'prev_month' ? 'selected' : ''}>O‘tgan oy</option>
+            <option value="quarter" ${myResPeriod === 'quarter' ? 'selected' : ''}>Oxirgi 3 oy</option>
+            <option value="this_year" ${myResPeriod === 'this_year' ? 'selected' : ''}>Joriy yil</option>
+          </select>
           <button type="button" class="btn btn-secondary" id="mr-port-btn">${icon('printer', 15)} A4 Portfolio</button>
-          <button type="button" class="btn btn-primary" id="mr-add-btn">${icon('plus', 15)} Yangi natija qo‘shish</button>
+          <button type="button" class="btn btn-primary" id="mr-add-btn">${icon('plus', 15)} Yutuq qo‘shish</button>
         </div>
       </div>
 
       <div class="kpi-grid">
         <div class="kpi-card">
-          <div class="kpi-top">
-            <span class="kpi-label">Umumiy reyting bali</span>
-            <span class="kpi-icon primary">${icon('trophy', 17)}</span>
-          </div>
-          <div class="kpi-value-row">
-            <span class="kpi-value" data-count="${k.T}" data-decimals="1">0</span>
-            <span class="kpi-unit">/ 130 ball</span>
-          </div>
+          <div class="kpi-top"><span class="kpi-label">Tasdiqlangan ball</span><span class="kpi-icon primary">${icon('trophy', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value">${k.T}</span><span class="kpi-unit">/ 130</span></div>
           <div class="progress-stack">
             <i class="seg-a" style="width:${(k.A / 130) * 100}%"></i>
             <i class="seg-b" style="width:${(k.B / 130) * 100}%"></i>
             <i class="seg-c" style="width:${(k.C / 130) * 100}%"></i>
           </div>
-          <div class="kpi-foot">
-            <span>${myRank ? `Maktab reytingi: #${myRank.rank} (${ranking.length} tadan)` : 'Reytingda qatnashmaydi'}</span>
-          </div>
+          <div class="kpi-foot"><span>Kutilayotgan ball rasmiy reytingga kirmaydi</span></div>
         </div>
-
         <div class="kpi-card">
-          <div class="kpi-top">
-            <span class="kpi-label">A bo‘lim — Salohiyat</span>
-            <span class="kpi-icon primary">${icon('award', 17)}</span>
-          </div>
-          <div class="kpi-value-row">
-            <span class="kpi-value" data-count="${k.A}" data-decimals="1">0</span>
-            <span class="kpi-unit">/ 50</span>
-          </div>
+          <div class="kpi-top"><span class="kpi-label">A bo‘lim (Salohiyat)</span><span class="kpi-icon primary">${icon('award', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value">${k.A}</span><span class="kpi-unit">/ 50</span></div>
           <div class="progress-single"><i style="width:${(k.A / 50) * 100}%;background:var(--sec-a)"></i></div>
-          <div class="kpi-foot"><span>Ilmiy daraja, toifa, sertifikat, metodika</span></div>
+          <div class="kpi-foot"><span>${SEC.A[0]}</span></div>
         </div>
-
         <div class="kpi-card">
-          <div class="kpi-top">
-            <span class="kpi-label">B bo‘lim — O‘quvchi yutuqlari</span>
-            <span class="kpi-icon success">${icon('graduation-cap', 17)}</span>
-          </div>
-          <div class="kpi-value-row">
-            <span class="kpi-value" data-count="${k.B}" data-decimals="1">0</span>
-            <span class="kpi-unit">/ 30</span>
-          </div>
+          <div class="kpi-top"><span class="kpi-label">B bo‘lim (O‘quvchilar)</span><span class="kpi-icon success">${icon('graduation-cap', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value">${k.B}</span><span class="kpi-unit">/ 30</span></div>
           <div class="progress-single"><i style="width:${(k.B / 30) * 100}%;background:var(--sec-b)"></i></div>
-          <div class="kpi-foot"><span>Olimpiada, STEAM, sport va ma’naviyat</span></div>
+          <div class="kpi-foot"><span>${SEC.B[0]}</span></div>
         </div>
-
         <div class="kpi-card">
-          <div class="kpi-top">
-            <span class="kpi-label">C bo‘lim — Faollik va rag‘bat</span>
-            <span class="kpi-icon warning">${icon('trending-up', 17)}</span>
-          </div>
-          <div class="kpi-value-row">
-            <span class="kpi-value" data-count="${k.C}" data-decimals="1">0</span>
-            <span class="kpi-unit">/ 50</span>
-          </div>
+          <div class="kpi-top"><span class="kpi-label">C bo‘lim (Faollik)</span><span class="kpi-icon warning">${icon('trending-up', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value">${k.C}</span><span class="kpi-unit">/ 50</span></div>
           <div class="progress-single"><i style="width:${(k.C / 50) * 100}%;background:var(--sec-c)"></i></div>
-          <div class="kpi-foot"><span>CHSB o‘zlashtirish, tanlovlar, sertifikatlar</span></div>
+          <div class="kpi-foot"><span>${SEC.C[0]}</span></div>
         </div>
       </div>
 
-      <div class="card card-compact" style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
-        <div style="display:flex;align-items:center;gap:12px">
-          <div class="kpi-icon primary">${icon('calendar', 18)}</div>
-          <div>
-            <div style="font-size:14px;font-weight:600">26-AF buyruq bo‘yicha topshirish muddatlari</div>
-            <div style="font-size:13px;color:var(--text-muted);margin-top:2px">
-              Mas’ullarga topshirish: <b>${esc(deadlines.d20Label)}</b> (${deadlines.n20} kun qoldi) ·
-              O‘IBDO‘ yakuniy hisoboti: <b>${esc(deadlines.d25Label)}</b> (${deadlines.n25} kun qoldi)
-            </div>
-          </div>
+      <div class="card card-compact" style="display:flex;align-items:center;gap:12px">
+        <div class="kpi-icon primary">${icon('calendar', 16)}</div>
+        <div style="font-size:13px;color:var(--text-2)">
+          Topshirish muddati: <b>${esc(deadlines.d20Label)}</b> (${deadlines.n20} kun qoldi) · Yakuniy hisobot: <b>${esc(deadlines.d25Label)}</b> (${deadlines.n25} kun qoldi)
         </div>
       </div>
 
       <div class="card">
         <div class="card-header">
           <div>
-            <h3 class="card-title">Kiritilgan yutuqlarim (${myEntries.length} ta)</h3>
+            <h3 class="card-title">Kiritilgan yutuqlar (${filteredEntries.length} ta)</h3>
             <p class="card-subtitle">Tasdiqlanmagan yoki rad etilgan arizalarni o‘chirishingiz mumkin</p>
           </div>
         </div>
 
-        ${myEntries.length === 0
+        ${filteredEntries.length === 0
           ? emptyStateHtml({
               iconName: 'award',
-              title: 'Hali natija kiritilmagan',
-              desc: 'Ilk yutug‘ingizni kiritish va tasdiqlashga yuborish uchun “Yangi natija qo‘shish” tugmasini bosing.',
-              actionHtml: `<button type="button" class="btn btn-primary" id="mr-empty-add">${icon('plus', 15)} Yangi natija qo‘shish</button>`
+              title: 'Ushbu davrda yutuq topilmadi',
+              desc: 'Yangi yutuq kiritish uchun yuqoridagi “Yutuq qo‘shish” tugmasidan foydalaning.',
+              actionHtml: `<button type="button" class="btn btn-primary" id="mr-empty-add">${icon('plus', 15)} Yutuq qo‘shish</button>`
             })
           : `
             <div class="table-wrap desktop-table-only">
               <table class="data-table">
                 <thead>
-                  <tr>
-                    <th>Sana</th>
-                    <th>Mezon</th>
-                    <th>Yutuq va tavsif</th>
-                    <th>Ball</th>
-                    <th>Holat</th>
-                    <th style="text-align:right">Amal</th>
-                  </tr>
+                  <tr><th>Sana</th><th>Mezon</th><th>Yutuq va tavsif</th><th>Ball</th><th>Holat</th><th style="text-align:right">Amal</th></tr>
                 </thead>
                 <tbody>
-                  ${myEntries.map(e => `
+                  ${filteredEntries.map(e => `
                     <tr>
                       <td style="white-space:nowrap">${formatDateUz(e.date)}</td>
                       <td>
@@ -551,9 +822,9 @@ export function renderMyResults(el, ctx) {
             </div>
 
             <div class="mobile-card-list">
-              ${myEntries.map(e => `
+              ${filteredEntries.map(e => `
                 <div class="card card-compact" style="box-shadow:none">
-                  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
                     <span style="font-size:12px;color:var(--text-muted)">${formatDateUz(e.date)}</span>
                     ${badgeStatus(e.status)}
                   </div>
@@ -573,6 +844,7 @@ export function renderMyResults(el, ctx) {
     </div>
   `;
 
+  $('#mr-period').onchange = e => { myResPeriod = e.target.value; renderMyResults(el, ctx); };
   $('#mr-add-btn').onclick = () => ctx.navigate('add_entry');
   $('#mr-port-btn').onclick = () => ctx.openPortfolioPrint(me.id);
   const emptyAdd = $('#mr-empty-add');
@@ -581,14 +853,8 @@ export function renderMyResults(el, ctx) {
   $$('[data-del-entry]').forEach(btn => {
     btn.onclick = async () => {
       const id = Number(btn.dataset.delEntry);
-      const target = entries.find(x => x.id === id);
+      const target = allMyEntries.find(x => x.id === id);
       if (!target) return;
-      if (target.status === 'approved' && me.role !== 'director') {
-        return toast('Tasdiqlangan yutuqni o‘chirib bo‘lmaydi.', 'warning');
-      }
-      if (target.uid !== me.id && me.role !== 'director') {
-        return toast('Faqat o‘z arizangizni o‘chirishingiz mumkin.', 'error');
-      }
       const ok = await confirmDialog({
         title: 'Arizani o‘chirish',
         message: `“${target.type}” yutug‘i bo‘yicha arizani o‘chirishni tasdiqlaysizmi?`,
@@ -608,7 +874,7 @@ export function renderMyResults(el, ctx) {
 }
 
 /* ==========================================================================
-   DEEP SCHOOL ANALYTICS (Director & Reviewer)
+   DEEP ANALYTICS (Director & Reviewer)
    ========================================================================== */
 export function renderAnalytics(el, ctx) {
   const { users, entries } = ctx;
@@ -627,10 +893,10 @@ export function renderAnalytics(el, ctx) {
     }
   }
 
-  const indBars = IND.map(i => ({
-    label: `${i.id}. ${i.name.split(' ')[0]}`,
+  const indHoriz = IND.map(i => ({
+    label: `${i.id}. ${i.name}`,
     value: Math.round((indPts[i.id] || 0) * 10) / 10,
-    sub: `${indCounts[i.id] || 0} ta tasdiqlangan`
+    sub: `${indCounts[i.id] || 0} ta tasdiqlangan ariza`
   })).sort((a, b) => b.value - a.value).slice(0, 8);
 
   const subjectStats = {};
@@ -649,79 +915,53 @@ export function renderAnalytics(el, ctx) {
     <div class="stack-v">
       <div class="page-header">
         <div>
-          <h1 class="page-title">Statistika va chuqur tahlil</h1>
-          <p class="page-desc">26-AF bo‘limlar, mezonlar va fan kafedralari kesimida real ko‘rsatkichlar.</p>
+          <h1 class="page-title">Statistika va tahlil</h1>
+          <p class="page-desc">26-AF bo‘limlar, indikatorlar va fan kafedralari kesimida chuqur tahlil.</p>
         </div>
         <div class="page-actions">
-          <button type="button" class="btn btn-secondary" id="an-reports-btn">${icon('file-text', 15)} Hisobotlarga o‘tish</button>
+          <button type="button" class="btn btn-secondary" id="an-rep">${icon('file-text', 15)} Hisobotlar</button>
         </div>
       </div>
 
       <div class="grid-3">
         <div class="card card-compact">
-          <div style="font-size:12.5px;color:var(--text-muted);font-weight:500">A bo‘lim o‘rtachasi (max 50)</div>
-          <div style="font-size:26px;font-weight:700;margin:6px 0;font-variant-numeric:tabular-nums">${avgA} ball</div>
+          <div style="font-size:12px;color:var(--text-muted)">A bo‘lim o‘rtachasi (maks 50)</div>
+          <div style="font-size:25px;font-weight:700;margin:5px 0">${avgA} ball</div>
           <div class="progress-single"><i style="width:${(avgA / 50) * 100}%;background:var(--sec-a)"></i></div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:6px">${SEC.A[0]} (${Math.round((avgA / 50) * 100)}%)</div>
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px">${SEC.A[0]} (${Math.round((avgA / 50) * 100)}%)</div>
         </div>
         <div class="card card-compact">
-          <div style="font-size:12.5px;color:var(--text-muted);font-weight:500">B bo‘lim o‘rtachasi (max 30)</div>
-          <div style="font-size:26px;font-weight:700;margin:6px 0;font-variant-numeric:tabular-nums">${avgB} ball</div>
+          <div style="font-size:12px;color:var(--text-muted)">B bo‘lim o‘rtachasi (maks 30)</div>
+          <div style="font-size:25px;font-weight:700;margin:5px 0">${avgB} ball</div>
           <div class="progress-single"><i style="width:${(avgB / 30) * 100}%;background:var(--sec-b)"></i></div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:6px">${SEC.B[0]} (${Math.round((avgB / 30) * 100)}%)</div>
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px">${SEC.B[0]} (${Math.round((avgB / 30) * 100)}%)</div>
         </div>
         <div class="card card-compact">
-          <div style="font-size:12.5px;color:var(--text-muted);font-weight:500">C bo‘lim o‘rtachasi (max 50)</div>
-          <div style="font-size:26px;font-weight:700;margin:6px 0;font-variant-numeric:tabular-nums">${avgC} ball</div>
+          <div style="font-size:12px;color:var(--text-muted)">C bo‘lim o‘rtachasi (maks 50)</div>
+          <div style="font-size:25px;font-weight:700;margin:5px 0">${avgC} ball</div>
           <div class="progress-single"><i style="width:${(avgC / 50) * 100}%;background:var(--sec-c)"></i></div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:6px">${SEC.C[0]} (${Math.round((avgC / 50) * 100)}%)</div>
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:6px">${SEC.C[0]} (${Math.round((avgC / 50) * 100)}%)</div>
         </div>
       </div>
 
       <div class="grid-2">
         <div class="card">
-          <div class="card-header">
-            <div>
-              <h3 class="card-title">Eng faol indikatorlar (jami ballar)</h3>
-              <p class="card-subtitle">Tasdiqlangan yutuqlar bo‘yicha yetakchi mezonlar</p>
-            </div>
-          </div>
-          <div id="an-ind-bar"></div>
+          <div class="card-header"><div><h3 class="card-title">Eng faol indikatorlar</h3><p class="card-subtitle">Tasdiqlangan jami ballar kesimida top 8 mezon</p></div></div>
+          <div id="an-ind-horiz"></div>
         </div>
-
         <div class="card">
-          <div class="card-header">
-            <div>
-              <h3 class="card-title">Bo‘limlar ulushi (o‘rtacha ball)</h3>
-              <p class="card-subtitle">Pedagoglar o‘rtacha ballarining A, B, C bo‘yicha taqsimoti</p>
-            </div>
-          </div>
+          <div class="card-header"><div><h3 class="card-title">Bo‘limlar ulushi</h3><p class="card-subtitle">O‘rtacha ballning A, B, C bo‘yicha tarkibi</p></div></div>
           <div id="an-sec-donut"></div>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-header">
-          <div>
-            <h3 class="card-title">Fanlar bo‘yicha batafsil ko‘rsatkichlar</h3>
-            <p class="card-subtitle">Har bir fan yo‘nalishidagi pedagoglar soni va o‘rtacha ballari</p>
-          </div>
-        </div>
+        <div class="card-header"><div><h3 class="card-title">Fanlar bo‘yicha natijalar</h3><p class="card-subtitle">Har bir fan yo‘nalishidagi pedagoglar soni va o‘rtacha ballari</p></div></div>
         ${subjRows.length === 0
-          ? emptyStateHtml({ iconName: 'bar-chart-3', title: 'Fanlar kesimida ma’lumot yo‘q', desc: 'Reytingda faol pedagoglar qo‘shilgach jadval shakllanadi.' })
-          : `
-            <div class="table-wrap">
+          ? emptyStateHtml({ iconName: 'bar-chart-3', title: 'Ma’lumotlar mavjud emas', desc: 'Reytingda faol pedagoglar qo‘shilgach jadval shakllanadi.' })
+          : `<div class="table-wrap">
               <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Fan yo‘nalishi</th>
-                    <th>Pedagoglar</th>
-                    <th>O‘rtacha A (50)</th>
-                    <th>O‘rtacha B (30)</th>
-                    <th>O‘rtacha C (50)</th>
-                    <th>O‘rtacha Jami (130)</th>
-                  </tr>
-                </thead>
+                <thead><tr><th>Fan yo‘nalishi</th><th>Pedagoglar</th><th>O‘rtacha A</th><th>O‘rtacha B</th><th>O‘rtacha C</th><th>O‘rtacha Jami</th></tr></thead>
                 <tbody>
                   ${subjRows.map(s => `
                     <tr>
@@ -735,13 +975,12 @@ export function renderAnalytics(el, ctx) {
                   `).join('')}
                 </tbody>
               </table>
-            </div>
-          `}
+            </div>`}
       </div>
     </div>
   `;
 
-  renderBarChart($('#an-ind-bar'), { items: indBars, unit: 'ball' });
+  renderHorizontalBarChart($('#an-ind-horiz'), { items: indHoriz, unit: 'ball' });
   renderDonutChart($('#an-sec-donut'), {
     centerValue: Math.round((avgA + avgB + avgC) * 10) / 10,
     centerLabel: 'O‘rtacha ball',
@@ -752,6 +991,5 @@ export function renderAnalytics(el, ctx) {
       { label: 'C — Faollik', value: avgC, color: 'var(--sec-c)' }
     ]
   });
-
-  $('#an-reports-btn').onclick = () => ctx.navigate('reports');
+  $('#an-rep').onclick = () => ctx.navigate('reports');
 }

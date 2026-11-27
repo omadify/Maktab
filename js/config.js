@@ -1,9 +1,10 @@
-// Core configuration, 26-AF decree scoring criteria, and pure business logic
+// Core configuration, authoritative 26-AF decree scoring criteria, and pure utilities
 
 export const CFG = {
   SUPABASE_URL: 'https://melqpmfjwqivylnmucwc.supabase.co',
   SUPABASE_KEY: 'sb_publishable_EGUiTu1TGcU1EnhZqKkptQ_Wk2jyQpt',
-  STORAGE_BUCKET: 'proofs'
+  STORAGE_BUCKET: 'proofs',
+  MAX_PROOF_BYTES: 15 * 1024 * 1024
 };
 
 export const SEC = {
@@ -49,6 +50,15 @@ export const ROLE = {
   it_admin: 'IT mutaxassis',
   director: 'Maktab direktori'
 };
+
+export function calcAuthoritativePts(indId, typeName, qty) {
+  const ind = IMAP[Number(indId)];
+  const q = Number(qty);
+  if (!ind || !Number.isInteger(q) || q < 1 || q > 50) return null;
+  const found = ind.types.find(t => t[0] === typeName);
+  if (!found) return null;
+  return Math.round(Math.min(found[1] * q, ind.max) * 100) / 100;
+}
 
 export function calcScores(rows) {
   const ok = {};
@@ -162,10 +172,19 @@ export function makeLogin(name, existingLogins = null, users = []) {
   return login;
 }
 
+// Cryptographically secure temporary password generator (Web Crypto API)
 export function tempPw() {
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const buf = new Uint8Array(6);
+  const cryptoObj = globalThis.crypto;
+  if (!cryptoObj || !cryptoObj.getRandomValues) {
+    throw new Error('Xavfsiz kriptografik generator mavjud emas');
+  }
+  cryptoObj.getRandomValues(buf);
   let p = 'Mktb#';
-  for (let i = 0; i < 5; i++) p += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < buf.length; i++) {
+    p += chars[buf[i] % chars.length];
+  }
   return p;
 }
 
@@ -180,4 +199,23 @@ export function getDeadlines() {
   const n25 = Math.round((d25 - t0) / 864e5);
   const fmt = d => d.toLocaleDateString('uz-UZ', { day: 'numeric', month: 'long' });
   return { d20Label: fmt(d20), d25Label: fmt(d25), n20, n25 };
+}
+
+export function detectClientMeta() {
+  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) ? navigator.userAgent : '';
+  const device_type = /Mobile|Android|iPhone/i.test(ua)
+    ? (/iPad|Tablet/i.test(ua) ? 'tablet' : 'mobile')
+    : (/iPad|Tablet/i.test(ua) ? 'tablet' : 'desktop');
+  let browser = 'Noma’lum';
+  if (ua.includes('Edg/')) browser = 'Edge';
+  else if (ua.includes('Chrome/')) browser = 'Chrome';
+  else if (ua.includes('Firefox/')) browser = 'Firefox';
+  else if (ua.includes('Safari/')) browser = 'Safari';
+  let os = 'Noma’lum';
+  if (ua.includes('Windows')) os = 'Windows';
+  else if (ua.includes('Android')) os = 'Android';
+  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+  else if (ua.includes('Mac OS')) os = 'macOS';
+  else if (ua.includes('Linux')) os = 'Linux';
+  return { device_type, browser, os };
 }
