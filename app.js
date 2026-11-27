@@ -1,4 +1,4 @@
-// Application Orchestrator V4.0: RBAC Router, Collapsible Shell, Single-Tab Heartbeat, Session Expiry & Notification Center
+// Application Orchestrator V6: 3-Layer Liquid Shell, Native Mobile Dock, RBAC Router, V6 Modules & Safe State Lifecycle
 import { ROLE, IMAP } from './js/config.js';
 import { api, saveSession, loadSession, isV4SecurityActive } from './js/api.js';
 import { icon } from './js/icons.js';
@@ -15,19 +15,26 @@ import {
   skeletonDashboardHtml,
   animateCounters
 } from './js/ui.js';
+import { syncLiquidPills, bindScrollAwareTopbar } from './js/motion.js';
 import { renderLogin, renderPasswordChange } from './js/views/auth.js';
 import { buildNotifications, markLocalNotifRead, openGlobalSearch } from './js/command.js';
-import { renderDashboard, renderMyResults, renderAnalytics } from './js/views/dashboard.js';
-import { renderRanking } from './js/views/ranking.js';
-import { renderTeachersDirectory, renderProfile, renderPortfolioPrint } from './js/views/profile.js';
-import { renderAddEntry, renderReviews, renderCriteria } from './js/views/entries.js';
-import { renderAdmin, renderReports, renderSettings } from './js/views/admin.js';
+import { renderDashboard, renderMyResults, renderAnalytics, resetDashboardViewState } from './js/views/dashboard.js';
+import { renderRanking, resetRankingViewState } from './js/views/ranking.js';
+import { renderTeachersDirectory, renderProfile, renderPortfolioPrint, resetProfileViewState } from './js/views/profile.js';
+import { renderAddEntry, renderReviews, renderCriteria, resetEntriesViewState } from './js/views/entries.js';
+import { renderAdmin, renderReports, renderSettings, resetAdminViewState } from './js/views/admin.js';
 import { renderMonitoring } from './js/views/monitoring.js';
+import { renderMyActivity } from './js/views/activity.js';
+import { renderAppeals, resetAppealsViewState } from './js/views/appeals.js';
+import { renderDevPlan, resetDevPlanViewState } from './js/views/dev_plan.js';
 
 const STATE = {
   users: [],
   entries: [],
   monitoring: { available: false, activities: [], logins: [], presence: [] },
+  myActivity: { available: null, rows: [] },
+  appeals: { available: null, rows: [] },
+  devGoals: { available: null, rows: [] },
   serverNotifications: [],
   loading: false,
   syncError: null,
@@ -44,6 +51,7 @@ let IS_OFFLINE = !navigator.onLine;
 let LAST_CREDS = [];
 let DIRTY_FORM = false;
 let LAST_RENDERED_ROUTE = null;
+let IS_BACKGROUND_REFRESH = false;
 let HEARTBEAT_TIMER = null;
 let EXPIRY_WARNED = false;
 
@@ -63,6 +71,9 @@ const ROUTE_TITLES = {
   monitoring: 'So‘nggi harakatlar',
   login_history: 'Kirishlar tarixi',
   presence: 'Faol foydalanuvchilar',
+  my_activity: 'Mening faoliyatim',
+  appeals: 'Murojaatlar va apellyatsiyalar',
+  dev_plan: 'Rivojlanish rejasi',
   settings: 'Sozlamalar'
 };
 
@@ -76,6 +87,7 @@ function getNavSections() {
     return false;
   }).length;
 
+  const openAppealsCount = (STATE.appeals.rows || []).filter(a => ['new', 'in_review', 'needs_info'].includes(a.status)).length;
   const sections = [];
 
   if (role === 'director') {
@@ -88,9 +100,10 @@ function getNavSections() {
       ]
     });
     sections.push({
-      title: 'Baholash',
+      title: 'Baholash va murojaatlar',
       items: [
         { id: 'reviews', label: 'Tasdiqlash markazi', icon: 'check-circle', badge: pendingReviewCount },
+        { id: 'appeals', label: 'Murojaatlar', icon: 'message-square', badge: openAppealsCount },
         { id: 'criteria', label: 'Baholash mezonlari', icon: 'book-open' }
       ]
     });
@@ -103,8 +116,10 @@ function getNavSections() {
       ]
     });
     sections.push({
-      title: 'Monitoring',
+      title: 'Shaxsiy va monitoring',
       items: [
+        { id: 'my_activity', label: 'Mening faoliyatim', icon: 'clock' },
+        { id: 'dev_plan', label: 'Rivojlanish rejasi', icon: 'target' },
         { id: 'monitoring', label: 'So‘nggi harakatlar', icon: 'activity' },
         { id: 'login_history', label: 'Kirishlar tarixi', icon: 'history' },
         { id: 'presence', label: 'Faol sessiyalar', icon: 'radio' }
@@ -125,6 +140,7 @@ function getNavSections() {
       items: [
         { id: 'criteria', label: 'Baholash mezonlari', icon: 'book-open' },
         { id: 'reports', label: 'Hisobotlar', icon: 'file-text' },
+        { id: 'my_activity', label: 'Mening faoliyatim', icon: 'clock' },
         { id: 'monitoring', label: 'So‘nggi harakatlar', icon: 'activity' },
         { id: 'login_history', label: 'Kirishlar tarixi', icon: 'history' },
         { id: 'presence', label: 'Faol foydalanuvchilar', icon: 'radio' }
@@ -132,27 +148,22 @@ function getNavSections() {
     });
   } else if (role === 'reviewer') {
     sections.push({
-      title: 'Asosiy',
+      title: 'Baholash markazi',
       items: [
         { id: 'dashboard', label: 'Boshqaruv paneli', icon: 'layout-dashboard' },
         { id: 'reviews', label: 'Tasdiqlash navbati', icon: 'check-circle', badge: pendingReviewCount },
-        { id: 'my_results', label: 'Mening natijam', icon: 'award' },
+        { id: 'appeals', label: 'Murojaatlar', icon: 'message-square', badge: openAppealsCount },
         { id: 'ranking', label: 'Reyting jadvali', icon: 'trophy' }
       ]
     });
     sections.push({
-      title: 'Faoliyat',
+      title: 'Katalog va tahlil',
       items: [
-        { id: 'add_entry', label: 'Yutuq qo‘shish', icon: 'plus' },
         { id: 'teachers', label: 'Pedagoglar', icon: 'users' },
-        { id: 'criteria', label: 'Baholash mezonlari', icon: 'book-open' }
-      ]
-    });
-    sections.push({
-      title: 'Tahlil',
-      items: [
+        { id: 'criteria', label: 'Baholash mezonlari', icon: 'book-open' },
         { id: 'analytics', label: 'Statistika', icon: 'bar-chart-3' },
-        { id: 'reports', label: 'Hisobotlar', icon: 'file-text' }
+        { id: 'reports', label: 'Hisobotlar', icon: 'file-text' },
+        { id: 'my_activity', label: 'Mening faoliyatim', icon: 'clock' }
       ]
     });
   } else {
@@ -161,14 +172,17 @@ function getNavSections() {
       items: [
         { id: 'dashboard', label: 'Boshqaruv paneli', icon: 'layout-dashboard' },
         { id: 'my_results', label: 'Mening natijam', icon: 'award' },
-        { id: 'ranking', label: 'Reyting jadvali', icon: 'trophy' }
+        { id: 'ranking', label: 'Reyting jadvali', icon: 'trophy' },
+        { id: 'add_entry', label: 'Yutuq qo‘shish', icon: 'plus' }
       ]
     });
     sections.push({
-      title: 'Faoliyat',
+      title: 'Shaxsiy kabinet',
       items: [
-        { id: 'add_entry', label: 'Yutuq qo‘shish', icon: 'plus' },
         { id: 'profile', label: 'Profil va portfolio', icon: 'user' },
+        { id: 'my_activity', label: 'Mening faoliyatim', icon: 'clock' },
+        { id: 'appeals', label: 'Murojaatlar', icon: 'message-square', badge: openAppealsCount },
+        { id: 'dev_plan', label: 'Rivojlanish rejasi', icon: 'target' },
         { id: 'criteria', label: 'Baholash mezonlari', icon: 'book-open' }
       ]
     });
@@ -182,17 +196,51 @@ function getNavSections() {
   return sections;
 }
 
+function getMobileDockItems() {
+  if (!ME) return [];
+  if (ME.role === 'director') {
+    return [
+      { id: 'dashboard', label: 'Panel', icon: 'layout-dashboard' },
+      { id: 'reviews', label: 'Tasdiq', icon: 'check-circle' },
+      { id: 'ranking', label: 'Reyting', icon: 'trophy' },
+      { id: 'appeals', label: 'Murojaat', icon: 'message-square' }
+    ];
+  }
+  if (ME.role === 'it_admin') {
+    return [
+      { id: 'dashboard', label: 'Panel', icon: 'layout-dashboard' },
+      { id: 'admin', label: 'Xodimlar', icon: 'users' },
+      { id: 'ranking', label: 'Reyting', icon: 'trophy' },
+      { id: 'monitoring', label: 'Monitor', icon: 'activity' }
+    ];
+  }
+  if (ME.role === 'reviewer') {
+    return [
+      { id: 'dashboard', label: 'Panel', icon: 'layout-dashboard' },
+      { id: 'reviews', label: 'Navbat', icon: 'check-circle' },
+      { id: 'ranking', label: 'Reyting', icon: 'trophy' },
+      { id: 'appeals', label: 'Murojaat', icon: 'message-square' }
+    ];
+  }
+  return [
+    { id: 'dashboard', label: 'Panel', icon: 'layout-dashboard' },
+    { id: 'my_results', label: 'Natija', icon: 'award' },
+    { id: 'add_entry', label: 'Qo‘shish', icon: 'plus' },
+    { id: 'profile', label: 'Profil', icon: 'user' }
+  ];
+}
+
 function getAllowedRoutes(role) {
   if (role === 'director') {
-    return ['dashboard', 'reviews', 'ranking', 'teachers', 'criteria', 'analytics', 'reports', 'admin', 'monitoring', 'login_history', 'presence', 'profile', 'portfolio_print', 'settings'];
+    return ['dashboard', 'reviews', 'ranking', 'teachers', 'criteria', 'analytics', 'reports', 'admin', 'monitoring', 'login_history', 'presence', 'my_activity', 'appeals', 'dev_plan', 'profile', 'portfolio_print', 'settings'];
   }
   if (role === 'it_admin') {
-    return ['dashboard', 'admin', 'teachers', 'ranking', 'criteria', 'reports', 'monitoring', 'login_history', 'presence', 'profile', 'portfolio_print', 'settings'];
+    return ['dashboard', 'admin', 'teachers', 'ranking', 'criteria', 'reports', 'monitoring', 'login_history', 'presence', 'my_activity', 'profile', 'portfolio_print', 'settings'];
   }
   if (role === 'reviewer') {
-    return ['dashboard', 'reviews', 'my_results', 'add_entry', 'ranking', 'teachers', 'criteria', 'analytics', 'reports', 'profile', 'portfolio_print', 'settings'];
+    return ['dashboard', 'reviews', 'ranking', 'teachers', 'criteria', 'analytics', 'reports', 'my_activity', 'appeals', 'profile', 'portfolio_print', 'settings'];
   }
-  return ['dashboard', 'my_results', 'add_entry', 'ranking', 'criteria', 'profile', 'portfolio_print', 'settings'];
+  return ['dashboard', 'my_results', 'add_entry', 'ranking', 'criteria', 'my_activity', 'appeals', 'dev_plan', 'profile', 'portfolio_print', 'settings'];
 }
 
 function startHeartbeat() {
@@ -200,14 +248,12 @@ function startHeartbeat() {
   if (!ME || !isV4SecurityActive()) return;
   const beat = () => {
     if (!ME || document.visibilityState !== 'visible') return;
-    // Deduplicate heartbeat across multiple browser tabs via localStorage timestamp
     const now = Date.now();
     const lastBeat = Number(localStorage.getItem('reyting_last_beat') || 0);
     if (now - lastBeat < 40000) return;
     localStorage.setItem('reyting_last_beat', String(now));
     api.heartbeatPresence();
 
-    // Check session expiry warning (<= 10 minutes remaining)
     if (SESSION_EXPIRES_AT && !EXPIRY_WARNED) {
       const remMs = new Date(SESSION_EXPIRES_AT).getTime() - now;
       if (remMs > 0 && remMs <= 10 * 60 * 1000) {
@@ -229,6 +275,16 @@ function stopHeartbeat() {
   }
 }
 
+function resetAllModules() {
+  resetDashboardViewState();
+  resetRankingViewState();
+  resetProfileViewState();
+  resetEntriesViewState();
+  resetAdminViewState();
+  resetAppealsViewState();
+  resetDevPlanViewState();
+}
+
 async function handleLogout() {
   stopHeartbeat();
   DIRTY_FORM = false;
@@ -238,10 +294,15 @@ async function handleLogout() {
   CUR_ROUTE = 'dashboard';
   ROUTE_PARAMS = {};
   LAST_CREDS = [];
+  LAST_RENDERED_ROUTE = null;
   STATE.users = [];
   STATE.entries = [];
   STATE.monitoring = { available: false, activities: [], logins: [], presence: [] };
+  STATE.myActivity = { available: null, rows: [] };
+  STATE.appeals = { available: null, rows: [] };
+  STATE.devGoals = { available: null, rows: [] };
   STATE.serverNotifications = [];
+  resetAllModules();
   render();
 }
 
@@ -266,15 +327,28 @@ async function syncData(showToastOnError = false) {
       saveSession(ME);
     }
 
+    const tasks = [];
     if (['director', 'it_admin'].includes(ME.role) && isV4SecurityActive()) {
-      STATE.monitoring = await api.fetchMonitoringData(150);
+      tasks.push(api.fetchMonitoringData(150).then(m => { STATE.monitoring = m; }).catch(() => {}));
     }
     if (isV4SecurityActive()) {
-      STATE.serverNotifications = await api.fetchNotifications();
+      tasks.push(api.fetchNotifications().then(n => { STATE.serverNotifications = n; }).catch(() => {}));
+      tasks.push(api.fetchMyActivity(120).then(a => { STATE.myActivity = a; }).catch(() => {}));
+      if (['teacher', 'reviewer', 'director'].includes(ME.role)) {
+        tasks.push(api.fetchAppeals().then(ap => { STATE.appeals = ap; }).catch(() => {}));
+        tasks.push(api.fetchDevGoals().then(dg => { STATE.devGoals = dg; }).catch(() => {}));
+      }
     }
+    if (tasks.length) await Promise.all(tasks);
     startHeartbeat();
   } catch (err) {
-    STATE.syncError = err.message || 'Ma’lumotlarni yuklashda xatolik yuz berdi.';
+    const msg = err.message || 'Ma’lumotlarni yuklashda xatolik yuz berdi.';
+    if (/Sessiya muddati tugagan|yaroqsiz/i.test(msg)) {
+      toast('Sessiya muddati tugadi. Qayta tizimga kiring.', 'warning');
+      await handleLogout();
+      return;
+    }
+    STATE.syncError = msg;
     if (showToastOnError) toast(STATE.syncError, 'error');
   } finally {
     STATE.loading = false;
@@ -302,6 +376,9 @@ function getContext() {
     users: STATE.users,
     entries: STATE.entries,
     monitoring: STATE.monitoring,
+    myActivity: STATE.myActivity,
+    appeals: STATE.appeals,
+    devGoals: STATE.devGoals,
     serverNotifications: STATE.serverNotifications,
     lastSync: STATE.lastSync,
     route: CUR_ROUTE,
@@ -310,6 +387,12 @@ function getContext() {
     lastCreds: LAST_CREDS,
     setLastCreds: creds => { LAST_CREDS = creds; },
     setDirtyForm: flag => { DIRTY_FORM = Boolean(flag); },
+    toggleTheme: () => {
+      const next = resolveTheme() === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      IS_BACKGROUND_REFRESH = true;
+      renderAppShell();
+    },
     navigate: (route, params = {}) => {
       if (route === CUR_ROUTE && JSON.stringify(params) === JSON.stringify(ROUTE_PARAMS)) return;
       tryLeave(() => {
@@ -317,6 +400,7 @@ function getContext() {
         CUR_ROUTE = allowed.includes(route) ? route : 'dashboard';
         ROUTE_PARAMS = params;
         MOBILE_DRAWER_OPEN = false;
+        IS_BACKGROUND_REFRESH = false;
         render();
         window.scrollTo({ top: 0, behavior: 'smooth' });
       });
@@ -326,6 +410,7 @@ function getContext() {
         CUR_ROUTE = 'profile';
         ROUTE_PARAMS = { uid };
         MOBILE_DRAWER_OPEN = false;
+        IS_BACKGROUND_REFRESH = false;
         render();
         window.scrollTo({ top: 0, behavior: 'smooth' });
       });
@@ -335,11 +420,13 @@ function getContext() {
         CUR_ROUTE = 'portfolio_print';
         ROUTE_PARAMS = { uid };
         MOBILE_DRAWER_OPEN = false;
+        IS_BACKGROUND_REFRESH = false;
         render();
         window.scrollTo({ top: 0, behavior: 'smooth' });
       });
     },
     refresh: async () => {
+      IS_BACKGROUND_REFRESH = true;
       await syncData(true);
       render();
     },
@@ -388,24 +475,31 @@ function renderAppShell() {
   if (!allowed.includes(CUR_ROUTE)) CUR_ROUTE = 'dashboard';
 
   const navSections = getNavSections();
-  const notifications = buildNotifications(ctx);
+  const dockItems = getMobileDockItems();
+  const notifications = buildNotifications({
+    ...ctx,
+    appeals: STATE.appeals.rows || [],
+    devGoals: STATE.devGoals.rows || []
+  });
   const unreadCount = notifications.filter(n => !n.read).length;
   const isDark = resolveTheme() === 'dark';
 
-  const quickAction = ['teacher', 'reviewer'].includes(ME.role)
-    ? `<button type="button" class="btn btn-primary btn-sm" id="topbar-quick-btn">${icon('plus', 15)} <span class="hide-xs">Yutuq qo‘shish</span></button>`
-    : (ME.role === 'director'
-      ? `<button type="button" class="btn btn-primary btn-sm" id="topbar-quick-btn">${icon('check-circle', 15)} <span class="hide-xs">Tasdiqlash</span></button>`
-      : `<button type="button" class="btn btn-primary btn-sm" id="topbar-quick-btn">${icon('user-plus', 15)} <span class="hide-xs">Pedagog qo‘shish</span></button>`);
+  const quickAction = ME.role === 'teacher'
+    ? `<button type="button" class="btn btn-primary btn-sm btn-pill" id="topbar-quick-btn">${icon('plus', 15)} <span class="hide-xs">Yutuq qo‘shish</span></button>`
+    : (['director', 'reviewer'].includes(ME.role)
+      ? `<button type="button" class="btn btn-primary btn-sm btn-pill" id="topbar-quick-btn">${icon('check-circle', 15)} <span class="hide-xs">Tasdiqlash</span></button>`
+      : `<button type="button" class="btn btn-primary btn-sm btn-pill" id="topbar-quick-btn">${icon('user-plus', 15)} <span class="hide-xs">Pedagog qo‘shish</span></button>`);
+
+  const skipPageAnim = LAST_RENDERED_ROUTE === CUR_ROUTE || IS_BACKGROUND_REFRESH;
 
   root.innerHTML = `
     <div class="app-shell ${SIDEBAR_COLLAPSED ? 'sidebar-collapsed' : ''} ${MOBILE_DRAWER_OPEN ? 'mobile-drawer-open' : ''}">
       <div class="drawer-backdrop" id="drawer-backdrop"></div>
 
-      <aside class="sidebar noprint" aria-label="Asosiy navigatsiya">
+      <aside class="sidebar glass-nav noprint" aria-label="Asosiy navigatsiya">
         <div class="sidebar-head">
           <div class="brand-mark">
-            <div class="brand-logo">${icon('graduation-cap', 17)}</div>
+            <div class="brand-logo">${icon('graduation-cap', 18)}</div>
             <div class="brand-text">
               <div class="brand-name">Pedagog Reyting</div>
               <div class="brand-sub">Norin tuman maktabi</div>
@@ -437,8 +531,8 @@ function renderAppShell() {
         </div>
 
         <div class="sidebar-foot">
-          <div class="sidebar-user-card" style="cursor:pointer" id="sidebar-user-btn" title="Profil">
-            ${avatarHtml(ME.name, 'sm')}
+          <div class="sidebar-user-card" style="cursor:pointer" id="sidebar-user-btn" title="Profilni ochish">
+            ${avatarHtml(ME.name, 'sm', ME.avatar_url)}
             <div class="sidebar-user-meta">
               <div class="sidebar-user-name">${esc(ME.name)}</div>
               <div class="sidebar-user-role">${esc(ROLE[ME.role] || ME.role)}</div>
@@ -448,7 +542,7 @@ function renderAppShell() {
       </aside>
 
       <div class="workspace">
-        <header class="topbar noprint">
+        <header class="topbar glass-nav noprint" id="app-topbar">
           <div class="topbar-left">
             <button type="button" class="btn btn-ghost btn-icon mobile-menu-btn" id="mobile-menu-btn" aria-label="Menyuni ochish">${icon('menu', 19)}</button>
             ${renderBreadcrumb()}
@@ -470,20 +564,22 @@ function renderAppShell() {
               </button>
               <div class="popover-menu popover-lg" id="notif-menu" style="display:none">
                 <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px 6px">
-                  <span style="font-size:13px;font-weight:600">Bildirishnomalar (${unreadCount} ta o‘qilmagan)</span>
-                  ${unreadCount > 0 ? `<button type="button" class="btn btn-ghost btn-sm" id="mark-all-read-btn" style="padding:2px 6px;min-height:24px;font-size:11.5px">${icon('check-check', 13)} Barchasi o‘qildi</button>` : ''}
+                  <span style="font-size:13px;font-weight:600">Bildirishnomalar (${unreadCount})</span>
+                  ${unreadCount > 0 ? `<button type="button" class="btn btn-ghost btn-sm" id="mark-all-read-btn" style="padding:2px 8px;min-height:26px;font-size:11.5px">${icon('check-check', 13)} O‘qildi</button>` : ''}
                 </div>
                 <div class="dropdown-sep"></div>
-                <div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:2px">
-                  ${notifications.map((n, idx) => `
-                    <button type="button" class="dropdown-item" data-notif-idx="${idx}" style="align-items:flex-start;padding:8px 10px;${n.read ? 'opacity:0.65' : 'background:var(--primary-soft)'}">
-                      <span style="color:var(--${n.tone === 'neutral' ? 'text-muted' : n.tone});margin-top:1px">${icon(n.icon, 15)}</span>
-                      <div style="min-width:0;flex:1">
-                        <div style="font-size:12.5px;font-weight:${n.read ? '500' : '600'};color:var(--text);white-space:normal">${esc(n.title)}</div>
-                        <div style="font-size:11.5px;color:var(--text-muted);white-space:normal;margin-top:2px">${esc(n.desc)}</div>
-                      </div>
-                    </button>
-                  `).join('')}
+                <div style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:3px">
+                  ${notifications.length === 0
+                    ? `<div style="padding:24px 12px;text-align:center;font-size:12.5px;color:var(--text-muted)">Hozircha yangi bildirishnomalar yo‘q</div>`
+                    : notifications.map((n, idx) => `
+                      <button type="button" class="dropdown-item" data-notif-idx="${idx}" style="align-items:flex-start;padding:9px 10px;${n.read ? 'opacity:0.65' : 'background:var(--primary-soft)'}">
+                        <span style="color:var(--${n.tone === 'neutral' ? 'text-muted' : n.tone});margin-top:2px">${icon(n.icon, 15)}</span>
+                        <div style="min-width:0;flex:1">
+                          <div style="font-size:12.5px;font-weight:${n.read ? '500' : '600'};color:var(--text);white-space:normal">${esc(n.title)}</div>
+                          <div style="font-size:11.5px;color:var(--text-muted);white-space:normal;margin-top:2px">${esc(n.desc)}</div>
+                        </div>
+                      </button>
+                    `).join('')}
                 </div>
               </div>
             </div>
@@ -493,10 +589,10 @@ function renderAppShell() {
             </button>
 
             <div class="popover-wrap">
-              <button type="button" class="btn btn-ghost" id="profile-menu-btn" style="padding:4px 8px 4px 4px;gap:7px" aria-label="Profil menyusi">
-                ${avatarHtml(ME.name, 'sm')}
+              <button type="button" class="btn btn-ghost btn-pill" id="profile-menu-btn" style="padding:4px 10px 4px 4px;gap:7px" aria-label="Profil menyusi">
+                ${avatarHtml(ME.name, 'sm', ME.avatar_url)}
                 <span class="hide-xs" style="font-size:13px;font-weight:500;max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(ME.name.split(' ')[0])}</span>
-                ${icon('chevron-down', 14)}
+                <span class="hide-xs" style="display:inline-flex">${icon('chevron-down', 14)}</span>
               </button>
               <div class="popover-menu" id="profile-menu" style="display:none">
                 <div style="padding:8px 10px">
@@ -506,6 +602,7 @@ function renderAppShell() {
                 </div>
                 <div class="dropdown-sep"></div>
                 <button type="button" class="dropdown-item" id="pm-profile">${icon('user', 15)} Mening profilim</button>
+                <button type="button" class="dropdown-item" id="pm-activity">${icon('clock', 15)} Mening faoliyatim</button>
                 <button type="button" class="dropdown-item" id="pm-settings">${icon('settings', 15)} Sozlamalar</button>
                 <button type="button" class="dropdown-item" id="pm-password">${icon('key', 15)} Parolni almashtirish</button>
                 <div class="dropdown-sep"></div>
@@ -521,12 +618,30 @@ function renderAppShell() {
           </div>
         ` : ''}
 
-        <main class="main-content ${LAST_RENDERED_ROUTE === CUR_ROUTE ? 'no-anim' : ''}" id="main-view"></main>
+        <main class="main-content ${skipPageAnim ? 'no-anim' : 'page-enter'}" id="main-view"></main>
       </div>
+
+      <!-- Native Mobile Bottom Dock -->
+      <nav class="mobile-bottom-nav glass-nav noprint" aria-label="Tezkor mobil navigatsiya">
+        ${dockItems.map(item => {
+          const isAct = CUR_ROUTE === item.id || (item.id === 'profile' && CUR_ROUTE === 'profile' && (ROUTE_PARAMS.uid || ME.id) === ME.id);
+          return `
+            <button type="button" class="mbn-item ${isAct ? 'active' : ''}" data-route="${item.id}" aria-current="${isAct ? 'page' : 'false'}">
+              ${icon(item.icon, 19)}
+              <span class="mbn-label">${esc(item.label)}</span>
+            </button>
+          `;
+        }).join('')}
+        <button type="button" class="mbn-item" id="mbn-more-btn" aria-label="Barcha bo‘limlar">
+          ${icon('menu', 19)}
+          <span class="mbn-label">Menyu</span>
+        </button>
+      </nav>
     </div>
   `;
 
   LAST_RENDERED_ROUTE = CUR_ROUTE;
+  bindScrollAwareTopbar($('#app-topbar'));
 
   $$('[data-route]').forEach(btn => {
     btn.onclick = () => {
@@ -541,14 +656,18 @@ function renderAppShell() {
     toggleBtn.onclick = () => {
       SIDEBAR_COLLAPSED = !SIDEBAR_COLLAPSED;
       localStorage.setItem('reyting_sidebar_collapsed', SIDEBAR_COLLAPSED ? '1' : '0');
+      IS_BACKGROUND_REFRESH = true;
       renderAppShell();
     };
   }
 
-  $('#mobile-menu-btn').onclick = () => {
+  const openDrawer = () => {
     MOBILE_DRAWER_OPEN = !MOBILE_DRAWER_OPEN;
     $('.app-shell').classList.toggle('mobile-drawer-open', MOBILE_DRAWER_OPEN);
   };
+  $('#mobile-menu-btn').onclick = openDrawer;
+  const mbnMore = $('#mbn-more-btn');
+  if (mbnMore) mbnMore.onclick = openDrawer;
   $('#drawer-backdrop').onclick = () => {
     MOBILE_DRAWER_OPEN = false;
     $('.app-shell').classList.remove('mobile-drawer-open');
@@ -557,15 +676,11 @@ function renderAppShell() {
   $('#sidebar-user-btn').onclick = () => ctx.openProfile(ME.id);
   $('#global-search-btn').onclick = () => openGlobalSearch(ctx);
   $('#topbar-quick-btn').onclick = () => {
-    if (['teacher', 'reviewer'].includes(ME.role)) ctx.navigate('add_entry');
-    else if (ME.role === 'director') ctx.navigate('reviews');
+    if (ME.role === 'teacher') ctx.navigate('add_entry');
+    else if (['director', 'reviewer'].includes(ME.role)) ctx.navigate('reviews');
     else ctx.navigate('admin');
   };
-  $('#theme-toggle-btn').onclick = () => {
-    const next = resolveTheme() === 'dark' ? 'light' : 'dark';
-    applyTheme(next);
-    $('#theme-toggle-btn').innerHTML = icon(next === 'dark' ? 'sun' : 'moon', 17);
-  };
+  $('#theme-toggle-btn').onclick = () => ctx.toggleTheme();
 
   const notifMenu = $('#notif-menu');
   const profileMenu = $('#profile-menu');
@@ -598,6 +713,7 @@ function renderAppShell() {
       markLocalNotifRead(notifications.map(n => n.id));
       STATE.serverNotifications.forEach(sn => { sn.is_read = true; });
       await api.markNotificationRead(null);
+      IS_BACKGROUND_REFRESH = true;
       renderAppShell();
     };
   }
@@ -606,6 +722,7 @@ function renderAppShell() {
     btn.onclick = () => { closePopovers(); notifications[Number(btn.dataset.notifIdx)].action(); };
   });
   $('#pm-profile').onclick = () => { closePopovers(); ctx.openProfile(ME.id); };
+  $('#pm-activity').onclick = () => { closePopovers(); ctx.navigate('my_activity'); };
   $('#pm-settings').onclick = () => { closePopovers(); ctx.navigate('settings'); };
   $('#pm-password').onclick = () => { closePopovers(); ctx.openPasswordModal(); };
   $('#pm-logout').onclick = () => { closePopovers(); ctx.logout(); };
@@ -644,9 +761,14 @@ function renderAppShell() {
   else if (CUR_ROUTE === 'reports') renderReports(main, ctx);
   else if (CUR_ROUTE === 'admin') renderAdmin(main, ctx);
   else if (CUR_ROUTE === 'monitoring' || CUR_ROUTE === 'login_history' || CUR_ROUTE === 'presence') renderMonitoring(main, ctx);
+  else if (CUR_ROUTE === 'my_activity') renderMyActivity(main, ctx);
+  else if (CUR_ROUTE === 'appeals') renderAppeals(main, ctx);
+  else if (CUR_ROUTE === 'dev_plan') renderDevPlan(main, ctx);
   else if (CUR_ROUTE === 'settings') renderSettings(main, ctx);
 
-  animateCounters(main);
+  syncLiquidPills(main);
+  animateCounters(main, skipPageAnim);
+  IS_BACKGROUND_REFRESH = false;
 }
 
 function render() {
@@ -660,6 +782,7 @@ function render() {
         SESSION_EXPIRES_AT = sess?.expiresAt || null;
         EXPIRY_WARNED = false;
         CUR_ROUTE = 'dashboard';
+        IS_BACKGROUND_REFRESH = false;
         await syncData(true);
         render();
       }
@@ -698,7 +821,7 @@ window.addEventListener('beforeunload', e => {
 
 window.addEventListener('online', () => { IS_OFFLINE = false; toast('Internet aloqasi tiklandi.', 'success'); if (ME) render(); });
 window.addEventListener('offline', () => { IS_OFFLINE = true; toast('Internet aloqasi uzildi.', 'warning'); if (ME) render(); });
-initThemeListener(() => { if (ME) render(); });
+initThemeListener(() => { if (ME) { IS_BACKGROUND_REFRESH = true; render(); } });
 
 (async function init() {
   const sess = loadSession();

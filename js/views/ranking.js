@@ -1,4 +1,4 @@
-// Premium Ranking Experience: Muted Gold/Silver/Bronze Podium, Global Rank Preservation, Partial Search Updates, Mobile Cards
+// Reimagined Leaderboard V6: Refined Metallic Podium, Global Rank Preservation, Avatars, Partial Updates & Mobile Cards
 import { getRanking, extractSubjectLabel } from '../config.js';
 import { icon } from '../icons.js';
 import { $, $$, esc, csvCell, toast, avatarHtml, emptyStateHtml } from '../ui.js';
@@ -13,6 +13,10 @@ let rankState = {
   pageSize: 15
 };
 
+export function resetRankingViewState() {
+  rankState = { search: '', subject: 'all', period: 'all', sortBy: 'globalRank', sortDir: 'asc', page: 1, pageSize: 15 };
+}
+
 export function exportRankingCSV(rows, periodLabel = 'Barcha davr') {
   const csvRows = rows.map(r => [
     r.globalRank,
@@ -25,10 +29,12 @@ export function exportRankingCSV(rows, periodLabel = 'Barcha davr') {
   ].map(csvCell).join(';'));
   const header = '\ufeffUmumiy o‘rin;F.I.Sh.;Fan;Salohiyat (50);Yutuqlar (30);Rag‘bat (50);Jami (130)\n';
   const blob = new Blob([header + csvRows.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  a.href = url;
   a.download = `pedagoglar_reytingi_${periodLabel.replace(/\s+/g, '_').toLowerCase()}.csv`;
   a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
   toast('Reyting hisoboti CSV formatida yuklab olindi.', 'success');
 }
 
@@ -42,6 +48,7 @@ const PERIOD_LABELS = {
 
 export function renderRanking(el, ctx) {
   const { me, users, entries } = ctx;
+  const userMap = new Map(users.map(u => [u.id, u]));
   const globalRanking = getRanking(users, entries, 'all');
   const globalRankMap = new Map(globalRanking.map(r => [r.id, r.rank]));
 
@@ -86,34 +93,37 @@ export function renderRanking(el, ctx) {
         </div>
       </div>
 
-      <!-- Top 3 Muted Gold / Silver / Bronze Podium -->
+      <!-- Top 3 Refined Metallic Podium -->
       <div class="podium-grid">
-        ${top3.map(r => `
-          <div class="podium-card rank-${r.rank}" data-open-prof="${r.id}">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-              <span class="rank-badge r${r.rank}">#${r.rank}-o‘rin</span>
-              <span class="badge badge-neutral">${r.approvedCount} ta yutuq</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:12px">
-              ${avatarHtml(r.name, 'lg')}
-              <div style="min-width:0">
-                <div style="font-size:15px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name)}</div>
-                <div style="font-size:12.5px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.subject)}</div>
+        ${top3.map(r => {
+          const u = userMap.get(r.id);
+          return `
+            <div class="podium-card rank-${r.rank} stagger-item" data-open-prof="${r.id}">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <span class="rank-badge r${r.rank}">#${r.rank}-o‘rin</span>
+                <span class="badge badge-neutral">${r.approvedCount} ta yutuq</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px">
+                ${avatarHtml(r.name, 'lg', u?.avatar_url)}
+                <div style="min-width:0">
+                  <div style="font-size:15.5px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name)}</div>
+                  <div style="font-size:12.5px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.subject)}</div>
+                </div>
+              </div>
+              <div>
+                <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:7px">
+                  <span style="font-size:25px;font-weight:800;color:var(--primary);font-variant-numeric:tabular-nums">${r.T} <small style="font-size:12.5px;font-weight:500;color:var(--text-muted)">/ 130</small></span>
+                  <span style="font-size:12px;color:var(--text-muted);font-variant-numeric:tabular-nums">A:${r.A} · B:${r.B} · C:${r.C}</span>
+                </div>
+                <div class="progress-stack">
+                  <i class="seg-a" style="width:${(r.A / 130) * 100}%"></i>
+                  <i class="seg-b" style="width:${(r.B / 130) * 100}%"></i>
+                  <i class="seg-c" style="width:${(r.C / 130) * 100}%"></i>
+                </div>
               </div>
             </div>
-            <div>
-              <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px">
-                <span style="font-size:24px;font-weight:700;color:var(--primary);font-variant-numeric:tabular-nums">${r.T} <small style="font-size:12.5px;font-weight:500;color:var(--text-muted)">/ 130</small></span>
-                <span style="font-size:12px;color:var(--text-muted)">A:${r.A} · B:${r.B} · C:${r.C}</span>
-              </div>
-              <div class="progress-stack">
-                <i class="seg-a" style="width:${(r.A / 130) * 100}%"></i>
-                <i class="seg-b" style="width:${(r.B / 130) * 100}%"></i>
-                <i class="seg-c" style="width:${(r.C / 130) * 100}%"></i>
-              </div>
-            </div>
-          </div>
-        `).join('')}
+          `;
+        }).join('')}
       </div>
 
       <div class="card">
@@ -223,71 +233,77 @@ export function renderRanking(el, ctx) {
             </tr>
           </thead>
           <tbody>
-            ${pageRows.map(r => `
-              <tr class="${r.id === me.id ? 'is-me' : ''}">
-                <td><span class="rank-badge ${r.globalRank <= 3 ? `r${r.globalRank}` : 'rn'}">#${r.globalRank}</span></td>
-                <td>
-                  <div style="display:flex;align-items:center;gap:10px">
-                    ${avatarHtml(r.name, 'sm')}
-                    <div style="font-weight:600">${esc(r.name)} ${r.id === me.id ? '<span class="badge badge-primary" style="margin-left:4px">Siz</span>' : ''}</div>
-                  </div>
-                </td>
-                <td style="color:var(--text-2)">${esc(r.subject)}</td>
-                <td><span style="font-size:15.5px;font-weight:700;color:var(--primary)">${r.T}</span> <span style="font-size:11.5px;color:var(--text-muted)">/ 130</span></td>
-                <td>
-                  <div class="progress-stack">
-                    <i class="seg-a" style="width:${(r.A / 130) * 100}%"></i>
-                    <i class="seg-b" style="width:${(r.B / 130) * 100}%"></i>
-                    <i class="seg-c" style="width:${(r.C / 130) * 100}%"></i>
-                  </div>
-                </td>
-                <td>${r.A}</td>
-                <td>${r.B}</td>
-                <td>${r.C}</td>
-                <td><span class="badge badge-neutral">${r.approvedCount}</span></td>
-                <td style="text-align:right">
-                  <div style="display:inline-flex;gap:6px">
-                    <button type="button" class="btn btn-secondary btn-sm" data-open-prof="${r.id}">Profil</button>
-                    <button type="button" class="btn btn-ghost btn-icon btn-sm" data-open-port="${r.id}" title="A4 Portfolio" aria-label="A4 Portfolio">${icon('printer', 14)}</button>
-                  </div>
-                </td>
-              </tr>
-            `).join('')}
+            ${pageRows.map(r => {
+              const u = userMap.get(r.id);
+              return `
+                <tr class="${r.id === me.id ? 'is-me' : ''}">
+                  <td><span class="rank-badge ${r.globalRank <= 3 ? `r${r.globalRank}` : 'rn'}">#${r.globalRank}</span></td>
+                  <td>
+                    <div style="display:flex;align-items:center;gap:10px">
+                      ${avatarHtml(r.name, 'sm', u?.avatar_url)}
+                      <div style="font-weight:600">${esc(r.name)} ${r.id === me.id ? '<span class="badge badge-primary" style="margin-left:4px">Siz</span>' : ''}</div>
+                    </div>
+                  </td>
+                  <td style="color:var(--text-2)">${esc(r.subject)}</td>
+                  <td><span style="font-size:15.5px;font-weight:700;color:var(--primary)">${r.T}</span> <span style="font-size:11.5px;color:var(--text-muted)">/ 130</span></td>
+                  <td>
+                    <div class="progress-stack">
+                      <i class="seg-a" style="width:${(r.A / 130) * 100}%"></i>
+                      <i class="seg-b" style="width:${(r.B / 130) * 100}%"></i>
+                      <i class="seg-c" style="width:${(r.C / 130) * 100}%"></i>
+                    </div>
+                  </td>
+                  <td>${r.A}</td>
+                  <td>${r.B}</td>
+                  <td>${r.C}</td>
+                  <td><span class="badge badge-neutral">${r.approvedCount}</span></td>
+                  <td style="text-align:right">
+                    <div style="display:inline-flex;gap:6px">
+                      <button type="button" class="btn btn-secondary btn-sm" data-open-prof="${r.id}">Profil</button>
+                      <button type="button" class="btn btn-ghost btn-icon btn-sm" data-open-port="${r.id}" title="A4 Portfolio" aria-label="A4 Portfolio">${icon('printer', 14)}</button>
+                    </div>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
           </tbody>
         </table>
       </div>
 
       <div class="mobile-card-list">
-        ${pageRows.map(r => `
-          <div class="card card-compact" style="box-shadow:none;${r.id === me.id ? 'border-color:var(--primary)' : ''}">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
-              <div style="display:flex;align-items:center;gap:10px;min-width:0">
-                <span class="rank-badge ${r.globalRank <= 3 ? `r${r.globalRank}` : 'rn'}">#${r.globalRank}</span>
-                ${avatarHtml(r.name, 'sm')}
-                <div style="min-width:0">
-                  <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name)}</div>
-                  <div style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.subject)}</div>
+        ${pageRows.map(r => {
+          const u = userMap.get(r.id);
+          return `
+            <div class="card card-compact" style="box-shadow:none;${r.id === me.id ? 'border-color:var(--primary)' : ''}">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0">
+                  <span class="rank-badge ${r.globalRank <= 3 ? `r${r.globalRank}` : 'rn'}">#${r.globalRank}</span>
+                  ${avatarHtml(r.name, 'sm', u?.avatar_url)}
+                  <div style="min-width:0">
+                    <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name)}</div>
+                    <div style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.subject)}</div>
+                  </div>
+                </div>
+                <div style="text-align:right;flex-shrink:0">
+                  <div style="font-size:17px;font-weight:700;color:var(--primary)">${r.T}</div>
+                  <div style="font-size:11px;color:var(--text-muted)">/ 130</div>
                 </div>
               </div>
-              <div style="text-align:right;flex-shrink:0">
-                <div style="font-size:17px;font-weight:700;color:var(--primary)">${r.T}</div>
-                <div style="font-size:11px;color:var(--text-muted)">/ 130</div>
+              <div class="progress-stack" style="margin-bottom:8px">
+                <i class="seg-a" style="width:${(r.A / 130) * 100}%"></i>
+                <i class="seg-b" style="width:${(r.B / 130) * 100}%"></i>
+                <i class="seg-c" style="width:${(r.C / 130) * 100}%"></i>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:10px">
+                <span>A: <b>${r.A}</b>/50</span><span>B: <b>${r.B}</b>/30</span><span>C: <b>${r.C}</b>/50</span><span>Yutuq: <b>${r.approvedCount}</b></span>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button type="button" class="btn btn-secondary" style="flex:1" data-open-prof="${r.id}">Profilni ko‘rish</button>
+                <button type="button" class="btn btn-secondary btn-icon" data-open-port="${r.id}" aria-label="A4 Portfolio">${icon('printer', 16)}</button>
               </div>
             </div>
-            <div class="progress-stack" style="margin-bottom:8px">
-              <i class="seg-a" style="width:${(r.A / 130) * 100}%"></i>
-              <i class="seg-b" style="width:${(r.B / 130) * 100}%"></i>
-              <i class="seg-c" style="width:${(r.C / 130) * 100}%"></i>
-            </div>
-            <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:10px">
-              <span>A: <b>${r.A}</b>/50</span><span>B: <b>${r.B}</b>/30</span><span>C: <b>${r.C}</b>/50</span><span>Yutuq: <b>${r.approvedCount}</b></span>
-            </div>
-            <div style="display:flex;gap:8px">
-              <button type="button" class="btn btn-secondary" style="flex:1" data-open-prof="${r.id}">Profilni ko‘rish</button>
-              <button type="button" class="btn btn-secondary btn-icon" data-open-port="${r.id}" aria-label="A4 Portfolio">${icon('printer', 16)}</button>
-            </div>
-          </div>
-        `).join('')}
+          `;
+        }).join('')}
       </div>
 
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:14px">

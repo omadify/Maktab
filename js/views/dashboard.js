@@ -1,11 +1,16 @@
-// Role-Specific Dashboards (Director Command Center, IT Admin, Reviewer, Teacher Workspace), My Results & Deep Analytics
+// Role-Specific Executive Dashboards, My Results & Deep Analytics V6
 import { IND, IMAP, ROLE, SEC, calcScores, filterEntriesByPeriod, getRanking, getDeadlines, extractSubjectLabel } from '../config.js';
 import { api } from '../api.js';
 import { icon } from '../icons.js';
-import { $, $$, esc, toast, confirmDialog, avatarHtml, badgeStatus, emptyStateHtml, formatDateUz, formatDateTimeTashkent } from '../ui.js';
+import { $, $$, esc, toast, confirmDialog, avatarHtml, badgeStatus, emptyStateHtml, formatDateUz, formatDateTimeTashkent, getTodayTashkent } from '../ui.js';
+import { scoreRingSvg, syncLiquidPills } from '../motion.js';
 import { renderAreaChart, renderLineChart, renderBarChart, renderHorizontalBarChart, renderDonutChart } from '../charts.js';
 
 let myResPeriod = 'all';
+
+export function resetDashboardViewState() {
+  myResPeriod = 'all';
+}
 
 function monthKey(dateStr) {
   if (!dateStr || !/^\d{4}-\d{2}/.test(dateStr)) return null;
@@ -60,6 +65,13 @@ function buildSubjectStats(ranking) {
     .slice(0, 7);
 }
 
+function getGreetingUz() {
+  const hr = Number(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tashkent', hour: 'numeric', hour12: false }));
+  if (hr < 12) return 'Xayrli tong';
+  if (hr < 18) return 'Xayrli kun';
+  return 'Xayrli kech';
+}
+
 /* ==========================================================================
    MAIN ROLE-ROUTER FOR DASHBOARD
    ========================================================================== */
@@ -72,16 +84,18 @@ export function renderDashboard(el, ctx) {
 }
 
 /* ==========================================================================
-   1. DIRECTOR COMMAND CENTER
+   1. DIRECTOR EXECUTIVE COMMAND CENTER
    ========================================================================== */
 function renderDirectorDashboard(el, ctx) {
-  const { users, entries, monitoring, lastSync } = ctx;
+  const { me, users, entries, monitoring, appeals, lastSync } = ctx;
+  const userMap = new Map(users.map(u => [u.id, u]));
   const ranking = getRanking(users, entries);
   const avgScore = ranking.length ? Math.round((ranking.reduce((s, r) => s + r.T, 0) / ranking.length) * 10) / 10 : 0;
   const pendingEntries = entries.filter(e => e.status === 'pending');
   const approvedCount = entries.filter(e => e.status === 'approved').length;
   const rejectedCount = entries.filter(e => e.status === 'rejected').length;
   const activeAccounts = users.filter(u => u.active).length;
+  const openAppeals = (appeals?.rows || []).filter(a => ['new', 'in_review', 'needs_info'].includes(a.status));
 
   const monAvail = monitoring?.available;
   const presence = monitoring?.presence || [];
@@ -90,11 +104,11 @@ function renderDirectorDashboard(el, ctx) {
 
   const nowMs = Date.now();
   const onlineNow = monAvail
-    ? presence.filter(p => p.last_seen_at && (nowMs - new Date(p.last_seen_at).getTime()) <= 2 * 60 * 1000).length
+    ? presence.filter(p => p.active_sessions > 0 && p.last_seen_at && (nowMs - new Date(p.last_seen_at).getTime()) <= 2 * 60 * 1000).length
     : null;
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = getTodayTashkent();
   const todayLogins = monAvail
-    ? logins.filter(l => l.success && (l.created_at || '').slice(0, 10) === todayStr).length
+    ? logins.filter(l => l.success && l.created_at && new Date(l.created_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' }) === todayStr).length
     : null;
 
   const monthly = buildMonthlySeries(entries);
@@ -102,15 +116,15 @@ function renderDirectorDashboard(el, ctx) {
   const deadlines = getDeadlines();
   const curYear = new Date().getFullYear();
 
-  // Build daily login trend for last 7 days if monitoring available
   const loginDaysMap = {};
   if (monAvail) {
     for (let i = 6; i >= 0; i--) {
-      const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+      const d = new Date(Date.now() - i * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
       loginDaysMap[d] = { ok: 0, fail: 0 };
     }
     for (const l of logins) {
-      const dk = (l.created_at || '').slice(0, 10);
+      if (!l.created_at) continue;
+      const dk = new Date(l.created_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
       if (loginDaysMap[dk]) {
         if (l.success) loginDaysMap[dk].ok += 1;
         else loginDaysMap[dk].fail += 1;
@@ -121,116 +135,89 @@ function renderDirectorDashboard(el, ctx) {
 
   el.innerHTML = `
     <div class="stack-v">
-      <div class="page-header">
-        <div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
-            <span class="badge badge-primary">${curYear - 1}–${curYear} o‘quv yili</span>
-            <span style="font-size:12px;color:var(--text-muted)">Yangilangan: ${lastSync ? formatDateTimeTashkent(lastSync) : 'Hozirgina'}</span>
+      <!-- Executive Hero Panel -->
+      <section class="hero-panel stagger-item">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap">
+          <div style="max-width:660px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+              <span class="badge badge-primary">${curYear - 1}–${curYear} o‘quv yili</span>
+              <span class="badge badge-neutral">26-AF · 130 ballik tizim</span>
+              <span style="font-size:12px;color:var(--text-muted)">Yangilangan: ${lastSync ? formatDateTimeTashkent(lastSync) : 'Hozirgina'}</span>
+            </div>
+            <h1 class="page-title" style="font-size:26px">${getGreetingUz()}, ${esc(me.name.split(' ')[0])}</h1>
+            <p class="page-desc" style="font-size:14px;margin-top:6px">
+              Norin tuman ixtisoslashtirilgan maktabi — pedagoglar samaradorligi, tasdiqlash navbati va murojaatlar boshqaruv markazi.
+            </p>
+            <div class="page-actions" style="margin-top:18px">
+              <button type="button" class="btn btn-primary" id="dir-reviews">${icon('check-circle', 15)} Tasdiqlash (${pendingEntries.length})</button>
+              <button type="button" class="btn btn-secondary" id="dir-appeals">${icon('message-square', 15)} Murojaatlar (${openAppeals.length})</button>
+              <button type="button" class="btn btn-secondary" id="dir-reports">${icon('file-text', 15)} Hisobotlar</button>
+              <button type="button" class="btn btn-ghost" id="dir-refresh">${icon('refresh-cw', 15)} Yangilash</button>
+            </div>
           </div>
-          <h1 class="page-title">Direktor boshqaruv markazi</h1>
-          <p class="page-desc">Norin tuman ixtisoslashtirilgan maktabi — 26-AF reyting ko‘rsatkichlari va monitoring.</p>
-        </div>
-        <div class="page-actions">
-          <button type="button" class="btn btn-secondary" id="dir-refresh">${icon('refresh-cw', 15)} Yangilash</button>
-          <button type="button" class="btn btn-secondary" id="dir-reports">${icon('file-text', 15)} Hisobotlar</button>
-          <button type="button" class="btn btn-primary" id="dir-reviews">${icon('check-circle', 15)} Tasdiqlash (${pendingEntries.length})</button>
-        </div>
-      </div>
 
-      <!-- Primary KPIs -->
+          <div style="display:flex;align-items:center;gap:18px;padding:14px 18px;border-radius:18px;background:var(--surface-soft);border:1px solid var(--border)">
+            ${scoreRingSvg({ value: avgScore, max: 130, size: 112, stroke: 10, color: 'var(--primary)', sub: '/ 130 o‘rtacha' })}
+            <div>
+              <div style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">Maktab indeksi</div>
+              <div style="font-size:20px;font-weight:700;margin-top:2px;color:var(--text)">${Math.round((avgScore / 130) * 100)}% samaradorlik</div>
+              <div style="font-size:12.5px;color:var(--text-2);margin-top:4px">${ranking.length} nafar reytingdagi pedagog</div>
+              <div style="font-size:12px;color:var(--success);margin-top:2px">${approvedCount} ta tasdiqlangan yutuq</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Priority KPIs -->
       <div class="kpi-grid">
-        <div class="kpi-card">
-          <div class="kpi-top">
-            <span class="kpi-label">Jami pedagoglar</span>
-            <span class="kpi-icon primary">${icon('users', 16)}</span>
-          </div>
-          <div class="kpi-value-row">
-            <span class="kpi-value" data-count="${ranking.length}">0</span>
-            <span class="kpi-unit">nafar</span>
-          </div>
-          <div class="kpi-foot">
-            <span>Reytingda ishtirok etmoqda</span>
-            <span class="badge badge-neutral">${activeAccounts} faol xodim</span>
-          </div>
+        <div class="kpi-card stagger-item">
+          <div class="kpi-top"><span class="kpi-label">Jami pedagoglar</span><span class="kpi-icon primary">${icon('users', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value" data-count="${ranking.length}">0</span><span class="kpi-unit">nafar</span></div>
+          <div class="kpi-foot"><span>Reytingda faol</span><span class="badge badge-neutral">${activeAccounts} xodim</span></div>
         </div>
 
-        <div class="kpi-card">
-          <div class="kpi-top">
-            <span class="kpi-label">O‘rtacha reyting</span>
-            <span class="kpi-icon">${icon('bar-chart-3', 16)}</span>
-          </div>
-          <div class="kpi-value-row">
-            <span class="kpi-value" data-count="${avgScore}" data-decimals="1">0</span>
-            <span class="kpi-unit">/ 130 ball</span>
-          </div>
-          <div class="kpi-foot">
-            <span>Samaradorlik: ${Math.round((avgScore / 130) * 100)}%</span>
-            <span class="badge badge-success">${approvedCount} tasdiqlangan</span>
-          </div>
+        <div class="kpi-card stagger-item">
+          <div class="kpi-top"><span class="kpi-label">Tasdiqlash navbati</span><span class="kpi-icon warning">${icon('clock', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value" data-count="${pendingEntries.length}">0</span><span class="kpi-unit">ta ariza</span></div>
+          <div class="kpi-foot"><span>Rad etilgan: ${rejectedCount}</span>${pendingEntries.length > 0 ? '<span class="badge badge-warning">Tekshiruv zarur</span>' : '<span class="badge badge-success">Navbat toza</span>'}</div>
         </div>
 
-        <div class="kpi-card">
-          <div class="kpi-top">
-            <span class="kpi-label">Tasdiqlash kutmoqda</span>
-            <span class="kpi-icon warning">${icon('clock', 16)}</span>
-          </div>
-          <div class="kpi-value-row">
-            <span class="kpi-value" data-count="${pendingEntries.length}">0</span>
-            <span class="kpi-unit">ta ariza</span>
-          </div>
-          <div class="kpi-foot">
-            <span>Rad etilgan: ${rejectedCount} ta</span>
-            ${pendingEntries.length > 0 ? '<span class="badge badge-warning">Tekshiruv zarur</span>' : '<span class="badge badge-success">Navbat toza</span>'}
-          </div>
+        <div class="kpi-card stagger-item">
+          <div class="kpi-top"><span class="kpi-label">Tasdiqlangan yutuqlar</span><span class="kpi-icon success">${icon('check-circle', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value" data-count="${approvedCount}">0</span><span class="kpi-unit">ta yutuq</span></div>
+          <div class="kpi-foot"><span>Ochiq murojaatlar: ${openAppeals.length}</span></div>
         </div>
 
-        <div class="kpi-card">
-          <div class="kpi-top">
-            <span class="kpi-label">Faol foydalanuvchilar</span>
-            <span class="kpi-icon success">${icon('radio', 16)}</span>
-          </div>
-          <div class="kpi-value-row">
-            <span class="kpi-value">${monAvail ? onlineNow : activeAccounts}</span>
-            <span class="kpi-unit">${monAvail ? 'hozir onlayn' : 'faol hisob'}</span>
-          </div>
-          <div class="kpi-foot">
-            <span>${monAvail ? `Bugungi kirishlar: ${todayLogins}` : 'Monitoring migratsiyadan so‘ng faollashadi'}</span>
-          </div>
+        <div class="kpi-card stagger-item">
+          <div class="kpi-top"><span class="kpi-label">Faol foydalanuvchilar</span><span class="kpi-icon success">${icon('radio', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value">${monAvail ? onlineNow : activeAccounts}</span><span class="kpi-unit">${monAvail ? 'hozir onlayn' : 'faol hisob'}</span></div>
+          <div class="kpi-foot"><span>${monAvail ? `Bugungi kirishlar: ${todayLogins}` : 'Monitoring migratsiyasidan so‘ng'}</span></div>
         </div>
       </div>
 
       <!-- Main Charts -->
-      <div class="grid-2">
+      <div class="grid-asymmetric">
         <div class="card">
           <div class="card-header">
-            <div>
-              <h3 class="card-title">Yutuqlar dinamikasi</h3>
-              <p class="card-subtitle">Tasdiqlangan ballar o‘sishi (yutuq sanasi bo‘yicha)</p>
-            </div>
+            <div><h3 class="card-title">Yutuqlar dinamikasi</h3><p class="card-subtitle">Tasdiqlangan ballar o‘sishi (yutuq sanasi bo‘yicha)</p></div>
           </div>
           <div id="dir-area-chart"></div>
         </div>
 
         <div class="card">
           <div class="card-header">
-            <div>
-              <h3 class="card-title">Fanlar bo‘yicha o‘rtacha natijalar</h3>
-              <p class="card-subtitle">Fan kafedralari kesimida o‘rtacha reyting</p>
-            </div>
+            <div><h3 class="card-title">Yutuqlar holati taqsimoti</h3><p class="card-subtitle">Tasdiqlangan, tekshiruvdagi va rad etilgan arizalar</p></div>
           </div>
-          <div id="dir-bar-chart"></div>
+          <div id="dir-donut-chart"></div>
         </div>
       </div>
 
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
-            <div>
-              <h3 class="card-title">Yutuqlar holati taqsimoti</h3>
-              <p class="card-subtitle">Tasdiqlangan, tekshiruvdagi va rad etilgan arizalar</p>
-            </div>
+            <div><h3 class="card-title">Fan kafedralari kesimida o‘rtacha ball</h3><p class="card-subtitle">Fan yo‘nalishlari bo‘yicha samaradorlik</p></div>
           </div>
-          <div id="dir-donut-chart"></div>
+          <div id="dir-bar-chart"></div>
         </div>
 
         <div class="card">
@@ -248,32 +235,32 @@ function renderDirectorDashboard(el, ctx) {
       <div class="grid-asymmetric">
         <div class="card">
           <div class="card-header">
-            <div>
-              <h3 class="card-title">Top pedagoglar</h3>
-              <p class="card-subtitle">Reyting yetakchilari</p>
-            </div>
+            <div><h3 class="card-title">Top pedagoglar</h3><p class="card-subtitle">Umumiy reyting yetakchilari</p></div>
             <button type="button" class="btn btn-ghost btn-sm" id="dir-all-rank">Barchasi ${icon('chevron-right', 14)}</button>
           </div>
           ${ranking.length === 0
             ? emptyStateHtml({ iconName: 'trophy', title: 'Reyting bo‘sh', desc: 'Hali reytingdagi pedagoglar kiritilmagan.' })
             : `
               <div style="display:flex;flex-direction:column;gap:8px">
-                ${ranking.slice(0, 5).map(r => `
-                  <div class="card-interactive" data-open-prof="${r.id}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;cursor:pointer">
-                    <div style="display:flex;align-items:center;gap:10px;min-width:0">
-                      <span class="rank-badge ${r.rank <= 3 ? `r${r.rank}` : 'rn'}">#${r.rank}</span>
-                      ${avatarHtml(r.name, 'sm')}
-                      <div style="min-width:0">
-                        <div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name)}</div>
-                        <div style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.subject)}</div>
+                ${ranking.slice(0, 5).map(r => {
+                  const u = userMap.get(r.id);
+                  return `
+                    <div class="card-interactive" data-open-prof="${r.id}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:12px">
+                      <div style="display:flex;align-items:center;gap:10px;min-width:0">
+                        <span class="rank-badge ${r.rank <= 3 ? `r${r.rank}` : 'rn'}">#${r.rank}</span>
+                        ${avatarHtml(r.name, 'sm', u?.avatar_url)}
+                        <div style="min-width:0">
+                          <div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name)}</div>
+                          <div style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.subject)}</div>
+                        </div>
+                      </div>
+                      <div style="text-align:right;flex-shrink:0">
+                        <div style="font-size:14.5px;font-weight:700;color:var(--primary);font-variant-numeric:tabular-nums">${r.T} ball</div>
+                        <div style="font-size:11px;color:var(--text-muted)">A:${r.A} · B:${r.B} · C:${r.C}</div>
                       </div>
                     </div>
-                    <div style="text-align:right;flex-shrink:0">
-                      <div style="font-size:14.5px;font-weight:700;color:var(--primary)">${r.T} ball</div>
-                      <div style="font-size:11px;color:var(--text-muted)">A:${r.A} · B:${r.B} · C:${r.C}</div>
-                    </div>
-                  </div>
-                `).join('')}
+                  `;
+                }).join('')}
               </div>
             `}
         </div>
@@ -305,7 +292,7 @@ function renderDirectorDashboard(el, ctx) {
                 ? `
                   <div style="display:flex;flex-direction:column;gap:8px">
                     ${pendingEntries.slice(0, 5).map(e => {
-                      const u = users.find(x => x.id === e.uid);
+                      const u = userMap.get(e.uid);
                       return `
                         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;padding-bottom:8px;border-bottom:1px solid var(--border)">
                           <div style="min-width:0">
@@ -371,6 +358,7 @@ function renderDirectorDashboard(el, ctx) {
   $('#dir-refresh').onclick = () => ctx.refresh();
   $('#dir-reports').onclick = () => ctx.navigate('reports');
   $('#dir-reviews').onclick = () => ctx.navigate('reviews');
+  $('#dir-appeals').onclick = () => ctx.navigate('appeals');
   $('#dir-all-rank').onclick = () => ctx.navigate('ranking');
   const monBtn = $('#dir-mon-btn');
   if (monBtn) monBtn.onclick = () => ctx.navigate('monitoring');
@@ -392,35 +380,37 @@ function renderItAdminDashboard(el, ctx) {
 
   el.innerHTML = `
     <div class="stack-v">
-      <div class="page-header">
-        <div>
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:3px">Texnik boshqaruv · Oxirgi yangilanish: ${lastSync ? formatDateTimeTashkent(lastSync) : 'Hozirgina'}</div>
-          <h1 class="page-title">IT mutaxassis boshqaruv paneli</h1>
-          <p class="page-desc">Akkauntlar holati, ommaviy import va tizimga kirish monitoringi.</p>
-        </div>
-        <div class="page-actions">
-          <button type="button" class="btn btn-secondary" id="it-refresh">${icon('refresh-cw', 15)} Yangilash</button>
-          <button type="button" class="btn btn-primary" id="it-users-btn">${icon('user-plus', 15)} Pedagoglarni yuklash</button>
+      <div class="hero-panel stagger-item">
+        <div class="page-header" style="margin-bottom:0">
+          <div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Texnik boshqaruv · Oxirgi sinxronizatsiya: ${lastSync ? formatDateTimeTashkent(lastSync) : 'Hozirgina'}</div>
+            <h1 class="page-title">IT mutaxassis boshqaruv paneli</h1>
+            <p class="page-desc">Akkauntlar holati, ommaviy Excel/CSV import va tizimga kirish xavfsizligi monitoringi.</p>
+          </div>
+          <div class="page-actions">
+            <button type="button" class="btn btn-secondary" id="it-refresh">${icon('refresh-cw', 15)} Yangilash</button>
+            <button type="button" class="btn btn-primary" id="it-users-btn">${icon('user-plus', 15)} Pedagoglar boshqaruvi</button>
+          </div>
         </div>
       </div>
 
       <div class="kpi-grid">
-        <div class="kpi-card">
+        <div class="kpi-card stagger-item">
           <div class="kpi-top"><span class="kpi-label">Jami foydalanuvchilar</span><span class="kpi-icon primary">${icon('users', 16)}</span></div>
           <div class="kpi-value-row"><span class="kpi-value" data-count="${users.length}">0</span><span class="kpi-unit">nafar</span></div>
           <div class="kpi-foot"><span>${teachersCount} nafar pedagog</span></div>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card stagger-item">
           <div class="kpi-top"><span class="kpi-label">Faol akkauntlar</span><span class="kpi-icon success">${icon('user-check', 16)}</span></div>
           <div class="kpi-value-row"><span class="kpi-value" data-count="${activeCount}">0</span><span class="kpi-unit">ta</span></div>
           <div class="kpi-foot"><span>Faolsiz: ${inactiveCount} ta</span></div>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card stagger-item">
           <div class="kpi-top"><span class="kpi-label">Parol almashtirishi kerak</span><span class="kpi-icon warning">${icon('key', 16)}</span></div>
           <div class="kpi-value-row"><span class="kpi-value" data-count="${mustChangeCount}">0</span><span class="kpi-unit">ta hisob</span></div>
           <div class="kpi-foot"><span>Birinchi kirish kutilmoqda</span></div>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card stagger-item">
           <div class="kpi-top"><span class="kpi-label">Reytingda qatnashuvchilar</span><span class="kpi-icon">${icon('trophy', 16)}</span></div>
           <div class="kpi-value-row"><span class="kpi-value" data-count="${ranking.length}">0</span><span class="kpi-unit">nafar</span></div>
           <div class="kpi-foot"><span>Faol va reytingga ulangan</span></div>
@@ -429,9 +419,7 @@ function renderItAdminDashboard(el, ctx) {
 
       <div class="grid-2">
         <div class="card">
-          <div class="card-header">
-            <div><h3 class="card-title">Rollar bo‘yicha taqsimot</h3><p class="card-subtitle">Tizimdagi barcha akkauntlar tarkibi</p></div>
-          </div>
+          <div class="card-header"><div><h3 class="card-title">Rollar bo‘yicha taqsimot</h3><p class="card-subtitle">Tizimdagi barcha akkauntlar tarkibi</p></div></div>
           <div id="it-role-donut"></div>
         </div>
 
@@ -439,7 +427,7 @@ function renderItAdminDashboard(el, ctx) {
           <div class="card-header">
             <div>
               <h3 class="card-title">So‘nggi kirishlar</h3>
-              <p class="card-subtitle">${monAvail ? 'Oxirgi autentifikatsiya hodisalari' : 'Monitoring jadvali V4 migratsiyadan so‘ng ishlaydi'}</p>
+              <p class="card-subtitle">${monAvail ? 'Oxirgi autentifikatsiya hodisalari' : 'Monitoring jadvali migratsiyadan so‘ng ishlaydi'}</p>
             </div>
             ${monAvail ? `<button type="button" class="btn btn-ghost btn-sm" id="it-mon-btn">Batafsil ${icon('chevron-right', 14)}</button>` : ''}
           </div>
@@ -477,50 +465,65 @@ function renderItAdminDashboard(el, ctx) {
 }
 
 /* ==========================================================================
-   3. REVIEWER DASHBOARD
+   3. REVIEWER DASHBOARD (Strictly Evaluator — Never Teacher / Never Ranked)
    ========================================================================== */
 function renderReviewerDashboard(el, ctx) {
-  const { me, users, entries } = ctx;
-  const myQueue = entries.filter(e => e.status === 'pending' && IMAP[e.ind]?.resp.includes(me.name));
-  const myEntries = entries.filter(e => e.uid === me.id);
-  const myScore = calcScores(myEntries);
-  const ranking = getRanking(users, entries);
-  const myRank = ranking.find(r => r.id === me.id);
+  const { me, users, entries, appeals } = ctx;
+  const userMap = new Map(users.map(u => [u.id, u]));
+  const scopedEntries = entries.filter(e => IMAP[e.ind]?.resp.includes(me.name));
+  const myQueue = scopedEntries.filter(e => e.status === 'pending');
+  const approvedCnt = scopedEntries.filter(e => e.status === 'approved').length;
+  const rejectedCnt = scopedEntries.filter(e => e.status === 'rejected').length;
+  const assignedInds = IND.filter(i => i.resp.includes(me.name));
   const deadlines = getDeadlines();
+  const openAppeals = (appeals?.rows || []).filter(a => ['new', 'in_review', 'needs_info'].includes(a.status));
 
   el.innerHTML = `
     <div class="stack-v">
-      <div class="page-header">
-        <div>
-          <h1 class="page-title">Mas’ul baholovchi paneli</h1>
-          <p class="page-desc">${esc(me.name)} · Sizga biriktirilgan mezonlar bo‘yicha tasdiqlash navbati va shaxsiy natijalar.</p>
+      <section class="hero-panel stagger-item">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+              <span class="badge badge-primary">${esc(ROLE[me.role])}</span>
+              <span class="badge badge-neutral">Faqat tekshiruvchi · Reytingdan tashqari</span>
+              <span class="badge badge-warning">${myQueue.length} ta navbat</span>
+            </div>
+            <h1 class="page-title">${getGreetingUz()}, ${esc(me.name)}</h1>
+            <p class="page-desc">Sizga biriktirilgan ${assignedInds.length} ta 26-AF mezoni bo‘yicha tasdiqlash navbati va murojaatlar boshqaruvi.</p>
+            <div class="page-actions" style="margin-top:16px">
+              <button type="button" class="btn btn-primary" id="rv-queue">${icon('check-circle', 15)} Tasdiqlash navbati (${myQueue.length})</button>
+              <button type="button" class="btn btn-secondary" id="rv-appeals">${icon('message-square', 15)} Murojaatlar (${openAppeals.length})</button>
+              <button type="button" class="btn btn-secondary" id="rv-rank">${icon('trophy', 15)} Reyting jadvali</button>
+            </div>
+          </div>
+          <div style="padding:14px 18px;border-radius:16px;background:var(--surface-soft);border:1px solid var(--border);min-width:210px">
+            <div style="font-size:11.5px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">Biriktirilgan mezonlar</div>
+            <div style="font-size:26px;font-weight:800;color:var(--primary);margin-top:4px;font-variant-numeric:tabular-nums">${assignedInds.length} <small style="font-size:12.5px;font-weight:500;color:var(--text-muted)">ta indikator</small></div>
+            <div style="font-size:12px;color:var(--text-2);margin-top:4px">${assignedInds.map(i => `${i.sec}-${i.id}`).join(', ')}</div>
+          </div>
         </div>
-        <div class="page-actions">
-          <button type="button" class="btn btn-secondary" id="rv-add">${icon('plus', 15)} Yutuq qo‘shish</button>
-          <button type="button" class="btn btn-primary" id="rv-queue">${icon('check-circle', 15)} Tasdiqlash (${myQueue.length})</button>
-        </div>
-      </div>
+      </section>
 
       <div class="kpi-grid">
-        <div class="kpi-card">
+        <div class="kpi-card stagger-item">
           <div class="kpi-top"><span class="kpi-label">Sizning navbatingiz</span><span class="kpi-icon warning">${icon('clock', 16)}</span></div>
           <div class="kpi-value-row"><span class="kpi-value" data-count="${myQueue.length}">0</span><span class="kpi-unit">ta ariza</span></div>
           <div class="kpi-foot"><span>Tekshirishni kutmoqda</span></div>
         </div>
-        <div class="kpi-card">
-          <div class="kpi-top"><span class="kpi-label">Shaxsiy ball</span><span class="kpi-icon primary">${icon('award', 16)}</span></div>
-          <div class="kpi-value-row"><span class="kpi-value" data-count="${myScore.T}" data-decimals="1">0</span><span class="kpi-unit">/ 130</span></div>
-          <div class="kpi-foot"><span>${myRank ? `#${myRank.rank}-o‘rin` : 'Reytingdan tashqari'}</span></div>
+        <div class="kpi-card stagger-item">
+          <div class="kpi-top"><span class="kpi-label">Tasdiqlangan jami</span><span class="kpi-icon success">${icon('check-circle', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value" data-count="${approvedCnt}">0</span><span class="kpi-unit">ta yutuq</span></div>
+          <div class="kpi-foot"><span>Rad etilgan: ${rejectedCnt} ta</span></div>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card stagger-item">
+          <div class="kpi-top"><span class="kpi-label">Ochiq murojaatlar</span><span class="kpi-icon primary">${icon('message-square', 16)}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value" data-count="${openAppeals.length}">0</span><span class="kpi-unit">ta ish</span></div>
+          <div class="kpi-foot"><span>Javob yoki ko‘rib chiqish</span></div>
+        </div>
+        <div class="kpi-card stagger-item">
           <div class="kpi-top"><span class="kpi-label">Topshirish muddati</span><span class="kpi-icon">${icon('calendar', 16)}</span></div>
           <div class="kpi-value-row"><span class="kpi-value">${deadlines.n20}</span><span class="kpi-unit">kun qoldi</span></div>
           <div class="kpi-foot"><span>${esc(deadlines.d20Label)}</span></div>
-        </div>
-        <div class="kpi-card">
-          <div class="kpi-top"><span class="kpi-label">Tasdiqlangan jami</span><span class="kpi-icon success">${icon('check-circle', 16)}</span></div>
-          <div class="kpi-value-row"><span class="kpi-value" data-count="${entries.filter(e => e.status === 'approved' && IMAP[e.ind]?.resp.includes(me.name)).length}">0</span><span class="kpi-unit">ta yutuq</span></div>
-          <div class="kpi-foot"><span>Mezonlaringiz bo‘yicha</span></div>
         </div>
       </div>
 
@@ -533,12 +536,15 @@ function renderReviewerDashboard(el, ctx) {
           ? emptyStateHtml({ iconName: 'check-circle', title: 'Navbat bo‘sh', desc: 'Sizga biriktirilgan indikatorlarda kutayotgan arizalar yo‘q.' })
           : `<div style="display:flex;flex-direction:column;gap:8px">
               ${myQueue.slice(0, 6).map(e => {
-                const owner = users.find(u => u.id === e.uid);
+                const owner = userMap.get(e.uid);
                 return `
-                  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px">
-                    <div style="min-width:0">
-                      <div style="font-weight:600;font-size:13.5px">${esc(owner?.name || 'Pedagog')} · <span style="color:var(--primary)">+${e.pts} ball</span></div>
-                      <div style="font-size:12px;color:var(--text-muted)">${e.ind}. ${esc(IMAP[e.ind]?.name || '')} — ${esc(e.type)}</div>
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 13px;border:1px solid var(--border);border-radius:12px">
+                    <div style="display:flex;align-items:center;gap:10px;min-width:0">
+                      ${avatarHtml(owner?.name || '?', 'sm', owner?.avatar_url)}
+                      <div style="min-width:0">
+                        <div style="font-weight:600;font-size:13.5px">${esc(owner?.name || 'Pedagog')} · <span style="color:var(--primary)">+${e.pts} ball</span></div>
+                        <div style="font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.ind}. ${esc(IMAP[e.ind]?.name || '')} — ${esc(e.type)}</div>
+                      </div>
                     </div>
                     <span class="badge badge-warning">${formatDateUz(e.date)}</span>
                   </div>
@@ -549,8 +555,9 @@ function renderReviewerDashboard(el, ctx) {
     </div>
   `;
 
-  $('#rv-add').onclick = () => ctx.navigate('add_entry');
   $('#rv-queue').onclick = () => ctx.navigate('reviews');
+  $('#rv-appeals').onclick = () => ctx.navigate('appeals');
+  $('#rv-rank').onclick = () => ctx.navigate('ranking');
   $('#rv-open-all').onclick = () => ctx.navigate('reviews');
 }
 
@@ -558,12 +565,13 @@ function renderReviewerDashboard(el, ctx) {
    4. TEACHER PERSONAL WORKSPACE
    ========================================================================== */
 function renderTeacherDashboard(el, ctx) {
-  const { me, users, entries } = ctx;
+  const { me, users, entries, devGoals } = ctx;
   const myEntries = entries.filter(e => e.uid === me.id);
   const k = calcScores(myEntries);
   const ranking = getRanking(users, entries);
   const myRank = ranking.find(r => r.id === me.id);
   const deadlines = getDeadlines();
+  const activeGoals = (devGoals?.rows || []).filter(g => g.status === 'active');
 
   const waitSum = sec => IND.filter(i => i.sec === sec).reduce((s, i) => s + (k.by[i.id]?.wait || 0), 0);
   const waitA = Math.round(waitSum('A') * 10) / 10;
@@ -573,7 +581,6 @@ function renderTeacherDashboard(el, ctx) {
   const remB = Math.max(0, Math.round((30 - k.B) * 10) / 10);
   const remC = Math.max(0, Math.round((50 - k.C) * 10) / 10);
 
-  // Growth opportunities: indicators with remaining potential
   const opportunities = IND
     .map(i => {
       const st = k.by[i.id] || { ok: 0, wait: 0 };
@@ -588,70 +595,66 @@ function renderTeacherDashboard(el, ctx) {
 
   el.innerHTML = `
     <div class="stack-v">
-      <div class="page-header">
-        <div>
-          <h1 class="page-title">Xush kelibsiz, ${esc(me.name)}</h1>
-          <p class="page-desc">${esc(me.subject || 'Pedagog')} · Shaxsiy rivojlanish va 26-AF reyting markazi.</p>
-        </div>
-        <div class="page-actions">
-          <button type="button" class="btn btn-secondary" id="td-port">${icon('printer', 15)} A4 Portfolio</button>
-          <button type="button" class="btn btn-primary" id="td-add">${icon('plus', 15)} Yutuq qo‘shish</button>
-        </div>
-      </div>
-
-      <!-- Hero Summary Card -->
-      <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap">
-        <div style="display:flex;align-items:center;gap:16px">
-          ${avatarHtml(me.name, 'xl')}
-          <div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <span style="font-size:18px;font-weight:700">${esc(me.name)}</span>
-              <span class="badge badge-primary">${myRank ? `#${myRank.rank}-o‘rin (${ranking.length} tadan)` : 'Reytingdan tashqari'}</span>
+      <!-- Teacher Executive Hero -->
+      <section class="hero-panel stagger-item">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+            <div style="cursor:pointer" id="td-open-prof">${avatarHtml(me.name, 'xl', me.avatar_url)}</div>
+            <div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+                <span class="badge badge-primary">${myRank ? `#${myRank.rank}-o‘rin (${ranking.length} tadan)` : 'Reytingdan tashqari'}</span>
+                <span class="badge badge-neutral">${esc(me.subject || 'Pedagog')}</span>
+              </div>
+              <h1 class="page-title">${getGreetingUz()}, ${esc(me.name)}</h1>
+              <p class="page-desc">Tasdiqlangan rasmiy ball: <b>${k.T} / 130 ball</b> (${Math.round((k.T / 130) * 100)}%) · ${myEntries.filter(e => e.status === 'pending').length} ta tekshiruvda</p>
+              <div class="page-actions" style="margin-top:14px">
+                <button type="button" class="btn btn-primary" id="td-add">${icon('plus', 15)} Yutuq qo‘shish</button>
+                <button type="button" class="btn btn-secondary" id="td-port">${icon('printer', 15)} A4 Portfolio</button>
+                <button type="button" class="btn btn-secondary" id="td-dev">${icon('target', 15)} Rivojlanish rejasi (${activeGoals.length})</button>
+              </div>
             </div>
-            <div style="font-size:13px;color:var(--text-muted);margin-top:3px">Tasdiqlangan rasmiy ball: <b>${k.T} / 130 ball</b> (${Math.round((k.T / 130) * 100)}%)</div>
-            <div class="progress-stack" style="width:280px;max-width:100%;margin-top:10px">
-              <i class="seg-a" style="width:${(k.A / 130) * 100}%"></i>
-              <i class="seg-b" style="width:${(k.B / 130) * 100}%"></i>
-              <i class="seg-c" style="width:${(k.C / 130) * 100}%"></i>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+            ${scoreRingSvg({ value: k.T, max: 130, size: 118, stroke: 10, color: 'var(--primary)', sub: '/ 130 ball' })}
+            <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
+              <div style="display:flex;align-items:center;gap:8px"><span class="presence-dot online"></span><span>Tasdiqlangan: <b>${myEntries.filter(e => e.status === 'approved').length}</b></span></div>
+              <div style="display:flex;align-items:center;gap:8px"><span class="presence-dot recent"></span><span>Tekshiruvda: <b>${myEntries.filter(e => e.status === 'pending').length}</b></span></div>
+              <div style="display:flex;align-items:center;gap:8px"><span class="presence-dot" style="background:var(--error)"></span><span>Rad etilgan: <b>${myEntries.filter(e => e.status === 'rejected').length}</b></span></div>
             </div>
           </div>
         </div>
-        <div style="display:flex;gap:16px;flex-wrap:wrap">
-          <div><div style="font-size:11.5px;color:var(--text-muted)">Tasdiqlangan</div><div style="font-size:20px;font-weight:700;color:var(--success)">${myEntries.filter(e => e.status === 'approved').length}</div></div>
-          <div><div style="font-size:11.5px;color:var(--text-muted)">Tekshiruvda</div><div style="font-size:20px;font-weight:700;color:var(--warning)">${myEntries.filter(e => e.status === 'pending').length}</div></div>
-          <div><div style="font-size:11.5px;color:var(--text-muted)">Rad etilgan</div><div style="font-size:20px;font-weight:700;color:var(--error)">${myEntries.filter(e => e.status === 'rejected').length}</div></div>
-        </div>
-      </div>
+      </section>
 
       <!-- A, B, C Detailed Breakdown -->
       <div class="grid-3">
-        <div class="card card-compact">
-          <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;font-weight:600;color:var(--sec-a)">A bo‘lim</span><span class="badge badge-neutral">Maks: 50</span></div>
-          <div style="font-size:26px;font-weight:700;margin:6px 0">${k.A} <small style="font-size:13px;color:var(--text-muted)">ball</small></div>
+        <div class="card card-compact stagger-item">
+          <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;font-weight:600;color:var(--sec-a)">A bo‘lim · Salohiyat</span><span class="badge badge-neutral">Maks: 50</span></div>
+          <div style="font-size:28px;font-weight:700;margin:6px 0;font-variant-numeric:tabular-nums">${k.A} <small style="font-size:13px;color:var(--text-muted)">ball</small></div>
           <div class="progress-single"><i style="width:${(k.A / 50) * 100}%;background:var(--sec-a)"></i></div>
           <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-muted);margin-top:8px">
             <span>Kutilmoqda: <b>+${waitA}</b></span>
-            <span>Qolgan imkoniyat: <b>${remA}</b></span>
+            <span>Imkoniyat: <b>${remA}</b></span>
           </div>
         </div>
 
-        <div class="card card-compact">
-          <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;font-weight:600;color:var(--sec-b)">B bo‘lim</span><span class="badge badge-neutral">Maks: 30</span></div>
-          <div style="font-size:26px;font-weight:700;margin:6px 0">${k.B} <small style="font-size:13px;color:var(--text-muted)">ball</small></div>
+        <div class="card card-compact stagger-item">
+          <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;font-weight:600;color:var(--sec-b)">B bo‘lim · O‘quvchilar</span><span class="badge badge-neutral">Maks: 30</span></div>
+          <div style="font-size:28px;font-weight:700;margin:6px 0;font-variant-numeric:tabular-nums">${k.B} <small style="font-size:13px;color:var(--text-muted)">ball</small></div>
           <div class="progress-single"><i style="width:${(k.B / 30) * 100}%;background:var(--sec-b)"></i></div>
           <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-muted);margin-top:8px">
             <span>Kutilmoqda: <b>+${waitB}</b></span>
-            <span>Qolgan imkoniyat: <b>${remB}</b></span>
+            <span>Imkoniyat: <b>${remB}</b></span>
           </div>
         </div>
 
-        <div class="card card-compact">
-          <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;font-weight:600;color:var(--sec-c)">C bo‘lim</span><span class="badge badge-neutral">Maks: 50</span></div>
-          <div style="font-size:26px;font-weight:700;margin:6px 0">${k.C} <small style="font-size:13px;color:var(--text-muted)">ball</small></div>
+        <div class="card card-compact stagger-item">
+          <div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;font-weight:600;color:var(--sec-c)">C bo‘lim · Faollik</span><span class="badge badge-neutral">Maks: 50</span></div>
+          <div style="font-size:28px;font-weight:700;margin:6px 0;font-variant-numeric:tabular-nums">${k.C} <small style="font-size:13px;color:var(--text-muted)">ball</small></div>
           <div class="progress-single"><i style="width:${(k.C / 50) * 100}%;background:var(--sec-c)"></i></div>
           <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-muted);margin-top:8px">
             <span>Kutilmoqda: <b>+${waitC}</b></span>
-            <span>Qolgan imkoniyat: <b>${remC}</b></span>
+            <span>Imkoniyat: <b>${remC}</b></span>
           </div>
         </div>
       </div>
@@ -674,7 +677,7 @@ function renderTeacherDashboard(el, ctx) {
               ? `<p style="margin:0;font-size:13px;color:var(--success)">Barcha mezonlar bo‘yicha maksimal ball to‘plangan!</p>`
               : `<div style="display:flex;flex-direction:column;gap:8px">
                   ${opportunities.map(o => `
-                    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:var(--bg-subtle);font-size:12.5px">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 11px;border-radius:10px;background:var(--surface-soft);font-size:12.5px">
                       <div style="min-width:0"><b style="color:var(--primary)">${o.sec}-${o.id}.</b> ${esc(o.name)}</div>
                       <span class="badge badge-neutral">+${o.remaining} ball</span>
                     </div>
@@ -700,11 +703,13 @@ function renderTeacherDashboard(el, ctx) {
   renderAreaChart($('#td-area-chart'), { labels: monthly.labels, values: monthly.approvedPts, unit: 'ball' });
   $('#td-add').onclick = () => ctx.navigate('add_entry');
   $('#td-port').onclick = () => ctx.openPortfolioPrint(me.id);
+  $('#td-dev').onclick = () => ctx.navigate('dev_plan');
   $('#td-my-res').onclick = () => ctx.navigate('my_results');
+  $('#td-open-prof').onclick = () => ctx.openProfile(me.id);
 }
 
 /* ==========================================================================
-   MENING NATIJAM (Personal Results with Period Filter)
+   MENING NATIJAM (Personal Results with Period Filter & Appeal Shortcut)
    ========================================================================== */
 export function renderMyResults(el, ctx) {
   const { me, users, entries } = ctx;
@@ -777,7 +782,7 @@ export function renderMyResults(el, ctx) {
         <div class="card-header">
           <div>
             <h3 class="card-title">Kiritilgan yutuqlar (${filteredEntries.length} ta)</h3>
-            <p class="card-subtitle">Tasdiqlanmagan yoki rad etilgan arizalarni o‘chirishingiz mumkin</p>
+            <p class="card-subtitle">Tasdiqlanmagan arizalarni o‘chirishingiz yoki rad etilgan qaror yuzasidan apellyatsiya yuborishingiz mumkin</p>
           </div>
         </div>
 
@@ -811,9 +816,12 @@ export function renderMyResults(el, ctx) {
                       <td><b>+${e.pts}</b></td>
                       <td>${badgeStatus(e.status)}</td>
                       <td style="text-align:right">
-                        ${e.status !== 'approved'
-                          ? `<button type="button" class="btn btn-danger btn-sm" data-del-entry="${e.id}">${icon('trash-2', 14)} O‘chirish</button>`
-                          : '<span style="color:var(--text-subtle)">—</span>'}
+                        <div style="display:inline-flex;gap:6px">
+                          ${e.status === 'rejected' ? `<button type="button" class="btn btn-secondary btn-sm" data-appeal-entry="${e.id}" title="Apellyatsiya yuborish">${icon('message-square', 13)} Apellyatsiya</button>` : ''}
+                          ${e.status !== 'approved'
+                            ? `<button type="button" class="btn btn-danger btn-sm" data-del-entry="${e.id}">${icon('trash-2', 14)} O‘chirish</button>`
+                            : '<span style="color:var(--text-subtle)">—</span>'}
+                        </div>
                       </td>
                     </tr>
                   `).join('')}
@@ -834,6 +842,7 @@ export function renderMyResults(el, ctx) {
                   ${e.note ? `<div style="font-size:12px;color:var(--error);margin-top:6px">Izoh: ${esc(e.note)}</div>` : ''}
                   <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
                     ${e.fpath ? `<a href="${esc(e.fpath)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${icon('external-link', 13)} Hujjat</a>` : ''}
+                    ${e.status === 'rejected' ? `<button type="button" class="btn btn-secondary btn-sm" data-appeal-entry="${e.id}">${icon('message-square', 13)} Apellyatsiya</button>` : ''}
                     ${e.status !== 'approved' ? `<button type="button" class="btn btn-danger btn-sm" data-del-entry="${e.id}">${icon('trash-2', 14)} O‘chirish</button>` : ''}
                   </div>
                 </div>
@@ -849,6 +858,10 @@ export function renderMyResults(el, ctx) {
   $('#mr-port-btn').onclick = () => ctx.openPortfolioPrint(me.id);
   const emptyAdd = $('#mr-empty-add');
   if (emptyAdd) emptyAdd.onclick = () => ctx.navigate('add_entry');
+
+  $$('[data-appeal-entry]').forEach(btn => {
+    btn.onclick = () => ctx.navigate('appeals', { createForEntryId: Number(btn.dataset.appealEntry) });
+  });
 
   $$('[data-del-entry]').forEach(btn => {
     btn.onclick = async () => {

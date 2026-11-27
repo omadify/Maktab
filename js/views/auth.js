@@ -1,4 +1,4 @@
-// Login & Password Change Views (Elegant Institutional Access)
+// Apple-Inspired Liquid Glass Authentication Views (Login & Password Update)
 import { api } from '../api.js';
 import { icon } from '../icons.js';
 import { $, esc, toast, applyTheme, resolveTheme } from '../ui.js';
@@ -7,78 +7,83 @@ export function renderLogin(root, { onLoginSuccess }) {
   const isDark = resolveTheme() === 'dark';
 
   root.innerHTML = `
+    <div class="auth-theme-float">
+      <button type="button" class="btn btn-glass btn-icon btn-pill" id="auth-theme-btn" title="Mavzuni almashtirish" aria-label="Mavzuni almashtirish">
+        ${icon(isDark ? 'sun' : 'moon', 17)}
+      </button>
+    </div>
+
     <div class="auth-shell">
-      <aside class="auth-aside">
-        <div class="auth-aside-inner">
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:36px">
-            <div class="brand-logo" style="width:40px;height:40px;border-radius:11px">
-              ${icon('graduation-cap', 22)}
-            </div>
+      <section class="auth-showcase" aria-label="Platforma haqida">
+        <div class="auth-hero-pill">
+          ${icon('sparkles', 14)}
+          <span>Norin tuman ixtisoslashtirilgan maktabi</span>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:14px">
+          <div class="brand-logo" style="width:48px;height:48px;border-radius:14px">
+            ${icon('graduation-cap', 25)}
+          </div>
+          <div>
+            <div style="font-size:18px;font-weight:700;letter-spacing:-0.02em;color:var(--text)">Pedagoglar Reyting Platformasi</div>
+            <div style="font-size:13px;color:var(--text-muted)">26-AF buyruq standarti · 15 indikator · 130 ballik tizim</div>
+          </div>
+        </div>
+
+        <h1 class="auth-headline">
+          Shaffof baholash, professional rivojlanish va aniq tahlil.
+        </h1>
+
+        <p class="auth-lead">
+          O‘qituvchilar salohiyati, o‘quvchilar yutuqlari va fan bo‘yicha faollikni yagona tizimda hisobga olish, hujjatlar bilan tasdiqlash va rasmiy A4 portfolio shakllantirish uchun yaratilgan zamonaviy maktab ekotizimi.
+        </p>
+
+        <div class="auth-bento-pills">
+          <div class="auth-glass-tile">
+            <div class="kpi-icon primary">${icon('award', 17)}</div>
             <div>
-              <div style="font-size:15.5px;font-weight:700;letter-spacing:-0.02em">Pedagog Reyting</div>
-              <div style="font-size:12.5px;color:#94A3B8">Norin tuman ixtisoslashtirilgan maktabi</div>
+              <div style="font-size:13.5px;font-weight:600;color:var(--text)">26-AF 130 ballik mezon</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px">A (50), B (30) va C (50) bo‘limlar kesimida avtomatik limit nazorati.</div>
             </div>
           </div>
 
-          <h1 style="font-size:30px;line-height:1.22;font-weight:700;color:#FFFFFF;letter-spacing:-0.03em;margin-bottom:14px">
-            Ta’lim sifatini tahlil qilish va shaffof reyting tizimi
-          </h1>
-          <p style="font-size:14.5px;line-height:1.6;color:#94A3B8;margin:0">
-            26-AF-sonli buyruq asosida pedagoglar faoliyatini 15 ta indikator va 130 ballik shkala bo‘yicha baholash, tasdiqlash va hisobotlarni shakllantirish platformasi.
-          </p>
+          <div class="auth-glass-tile">
+            <div class="kpi-icon success">${icon('shield', 17)}</div>
+            <div>
+              <div style="font-size:13.5px;font-weight:600;color:var(--text)">Mas’ul ekspert tasdig‘i</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Har bir yutuq tasdiqlovchi PDF/skan hujjat asosida ko‘rib chiqiladi.</div>
+            </div>
+          </div>
 
-          <div class="auth-feature-list">
-            <div class="auth-feature-item">
-              <div class="auth-feature-icon">${icon('bar-chart-3', 17)}</div>
-              <div>
-                <div style="font-size:13.5px;font-weight:600;color:#F8FAFC">Institutional Intelligence</div>
-                <div style="font-size:12.5px;color:#94A3B8;margin-top:2px">Salohiyat, o‘quvchi yutuqlari va fan faolligi bo‘yicha real tahlillar.</div>
-              </div>
+          <div class="auth-glass-tile">
+            <div class="kpi-icon warning">${icon('target', 17)}</div>
+            <div>
+              <div style="font-size:13.5px;font-weight:600;color:var(--text)">Rivojlanish va murojaatlar</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Shaxsiy rivojlanish rejasi, faoliyat tarixi va apellyatsiya markazi.</div>
             </div>
-            <div class="auth-feature-item">
-              <div class="auth-feature-icon">${icon('shield', 17)}</div>
-              <div>
-                <div style="font-size:13.5px;font-weight:600;color:#F8FAFC">Xavfsiz tasdiqlash va audit</div>
-                <div style="font-size:12.5px;color:#94A3B8;margin-top:2px">Mas’ul ekspertlar va rahbariyat nazorati ostida shaffof tekshiruv.</div>
-              </div>
-            </div>
-            <div class="auth-feature-item">
-              <div class="auth-feature-icon">${icon('printer', 17)}</div>
-              <div>
-                <div style="font-size:13.5px;font-weight:600;color:#F8FAFC">Rasmiy A4 portfolio va hisobotlar</div>
-                <div style="font-size:12.5px;color:#94A3B8;margin-top:2px">Chop etishga tayyor shaxsiy portfolio va CSV eksport.</div>
-              </div>
+          </div>
+
+          <div class="auth-glass-tile">
+            <div class="kpi-icon">${icon('printer', 17)}</div>
+            <div>
+              <div style="font-size:13.5px;font-weight:600;color:var(--text)">Rasmiy A4 Portfolio</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Chop etishga tayyor shaxsiy hisobot va Excel/CSV eksport.</div>
             </div>
           </div>
         </div>
-
-        <div style="position:relative;z-index:1;font-size:12px;color:#64748B">
-          26-AF buyruq standarti · 15 indikator · 130 ballik tizim
-        </div>
-      </aside>
+      </section>
 
       <main class="auth-main">
-        <div class="auth-theme-float">
-          <button type="button" class="btn btn-secondary btn-icon" id="auth-theme-btn" title="Mavzuni almashtirish" aria-label="Mavzuni almashtirish">
-            ${icon(isDark ? 'sun' : 'moon', 17)}
-          </button>
-        </div>
-
-        <div class="auth-card">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
-            <div class="brand-logo" style="width:36px;height:36px">${icon('graduation-cap', 19)}</div>
-            <div>
-              <div style="font-size:14.5px;font-weight:700;color:var(--text)">Pedagog Reyting</div>
-              <div style="font-size:12px;color:var(--text-muted)">Norin tuman ixtisoslashtirilgan maktabi</div>
-            </div>
+        <div class="auth-card glass-frosted">
+          <div style="margin-bottom:22px">
+            <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--primary);margin-bottom:6px">Shaxsiy kabinet</div>
+            <h2 style="font-size:22px;font-weight:700;margin-bottom:6px;letter-spacing:-0.025em">Tizimga kirish</h2>
+            <p style="font-size:13.5px;color:var(--text-muted);margin:0">
+              Davom etish uchun maktab tomonidan berilgan login va parolingizni kiriting.
+            </p>
           </div>
 
-          <h2 style="font-size:20px;font-weight:700;margin-bottom:5px">Tizimga kirish</h2>
-          <p style="font-size:13px;color:var(--text-muted);margin:0 0 20px">
-            Shaxsiy kabinetingizga kirish uchun login va parolingizni kiriting.
-          </p>
-
-          <form id="login-form" class="stack-v" style="gap:15px" novalidate>
+          <form id="login-form" class="stack-v" style="gap:16px" novalidate>
             <div class="field">
               <label for="lg">Login</label>
               <div class="input-icon-wrap">
@@ -103,13 +108,14 @@ export function renderLogin(root, { onLoginSuccess }) {
               <span id="login-error-text"></span>
             </div>
 
-            <button class="btn btn-primary" type="submit" id="l-btn" style="width:100%;min-height:42px;margin-top:4px">
-              Kirish
+            <button class="btn btn-primary" type="submit" id="l-btn" style="width:100%;min-height:44px;font-size:14px;border-radius:12px;margin-top:2px">
+              Tizimga kirish ${icon('arrow-right', 16)}
             </button>
           </form>
 
-          <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted);text-align:center">
-            Parolni unutgan bo‘lsangiz, maktab IT mutaxassisiga murojaat qiling.
+          <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:8px">
+            ${icon('lock', 14)}
+            <span>Parolni unutgan bo‘lsangiz, maktab IT mutaxassisiga murojaat qiling.</span>
           </div>
         </div>
       </main>
@@ -152,14 +158,14 @@ export function renderLogin(root, { onLoginSuccess }) {
     submitting = true;
     const btn = $('#l-btn');
     btn.disabled = true;
-    btn.innerHTML = `${icon('refresh-cw', 15)} Tekshirilmoqda…`;
+    btn.innerHTML = `<span class="anim-spin" style="display:inline-flex">${icon('refresh-cw', 15)}</span> Tekshirilmoqda…`;
 
     try {
       const res = await api.login(login, pw);
       if (!res.ok || !res.user) {
         showErr(res.error || 'Login yoki parol noto‘g‘ri.');
         btn.disabled = false;
-        btn.textContent = 'Kirish';
+        btn.innerHTML = `Tizimga kirish ${icon('arrow-right', 16)}`;
         submitting = false;
         return;
       }
@@ -167,7 +173,7 @@ export function renderLogin(root, { onLoginSuccess }) {
     } catch (err) {
       showErr('Tizimga ulanishda xatolik: ' + err.message);
       btn.disabled = false;
-      btn.textContent = 'Kirish';
+      btn.innerHTML = `Tizimga kirish ${icon('arrow-right', 16)}`;
       submitting = false;
     }
   };
@@ -175,12 +181,12 @@ export function renderLogin(root, { onLoginSuccess }) {
 
 export function renderPasswordChange(root, { user, forced, onDone, onCancel }) {
   root.innerHTML = `
-    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg)">
-      <div class="auth-card" style="max-width:430px">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
-          <div class="kpi-icon primary" style="width:38px;height:38px">${icon('key', 18)}</div>
+    <div style="position:relative;z-index:1;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px">
+      <div class="auth-card glass-frosted" style="max-width:440px">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
+          <div class="kpi-icon primary" style="width:42px;height:42px">${icon('key', 19)}</div>
           <div>
-            <h2 style="font-size:18px;font-weight:700">${forced ? 'Yangi parol o‘rnating' : 'Parolni yangilash'}</h2>
+            <h2 style="font-size:19px;font-weight:700">${forced ? 'Yangi parol o‘rnating' : 'Parolni yangilash'}</h2>
             <div style="font-size:12.5px;color:var(--text-muted)">${esc(user.name)} (${esc(user.login)})</div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-// Comprehensive Automated Test Suite for Norin Pedagog Reyting V4.0
+// Comprehensive Automated Test Suite for Norin Pedagog Reyting V6.0
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,7 +15,7 @@ import {
   tempPw,
   extractSubjectLabel
 } from '../js/config.js';
-import { validateProofFile } from '../js/api.js';
+import { validateProofFile, validateImageFile } from '../js/api.js';
 import { csvCell } from '../js/ui.js';
 
 let passed = 0;
@@ -25,7 +25,7 @@ async function test(name, fn) {
   console.log(`PASS: ${name}`);
 }
 
-// 1. Rating Engine & 26-AF Decree Compliance
+// 1. Rating Engine & 26-AF Decree Compliance (Absolute Functional Preservation)
 await test('26-AF schema has 15 indicators and 130 max points (A=50, B=30, C=50)', () => {
   assert.equal(IND.length, 15);
   assert.equal(SEC.A[1], 50);
@@ -41,9 +41,9 @@ await test('26-AF schema has 15 indicators and 130 max points (A=50, B=30, C=50)
 });
 
 await test('calcAuthoritativePts validates indicator, type, qty and caps at indicator max', () => {
-  assert.equal(calcAuthoritativePts(1, 'PhD / dotsent', 2), 10); // 8*2=16 capped at 10
+  assert.equal(calcAuthoritativePts(1, 'PhD / dotsent', 2), 10);
   assert.equal(calcAuthoritativePts(18, '90% va yuqori (sinf/chorak)', 3), 12);
-  assert.equal(calcAuthoritativePts(18, '90% va yuqori (sinf/chorak)', 10), 20); // capped at 20
+  assert.equal(calcAuthoritativePts(18, '90% va yuqori (sinf/chorak)', 10), 20);
   assert.equal(calcAuthoritativePts(999, 'Oliy toifa', 1), null);
   assert.equal(calcAuthoritativePts(1, 'Noto‘g‘ri tur', 1), null);
   assert.equal(calcAuthoritativePts(1, 'Oliy toifa', 0), null);
@@ -53,8 +53,8 @@ await test('calcAuthoritativePts validates indicator, type, qty and caps at indi
 await test('calcScores caps per-indicator approved & pending and excludes rejected', () => {
   const rows = [
     { ind: 1, status: 'approved', pts: 8 },
-    { ind: 1, status: 'approved', pts: 6 }, // capped at 10
-    { ind: 1, status: 'pending', pts: 5 },  // 10-10 = 0 remaining wait
+    { ind: 1, status: 'approved', pts: 6 },
+    { ind: 1, status: 'pending', pts: 5 },
     { ind: 2, status: 'pending', pts: 4 },
     { ind: 14, status: 'approved', pts: 5 },
     { ind: 18, status: 'rejected', pts: 10 }
@@ -70,22 +70,24 @@ await test('calcScores caps per-indicator approved & pending and excludes reject
   assert.equal(sc.T, 15);
 });
 
-await test('getRanking sorts by Total DESC, Section A DESC, Name ASC and excludes inactive/unranked', () => {
+await test('getRanking sorts by Total DESC, Section A DESC, Name ASC and excludes inactive/unranked/non-teachers', () => {
   const users = [
-    { id: 1, name: 'Alisher Xolmatov', role: 'director', ranked: 0, active: 1 },
+    { id: 1, name: 'Alisher Xolmatov', role: 'director', ranked: 1, active: 1 },
+    { id: 5, name: 'D.Rasulova', role: 'reviewer', ranked: 1, active: 1 },
+    { id: 6, name: 'Hasanboy Toshboyev', role: 'it_admin', ranked: 1, active: 1 },
     { id: 2, name: 'Bobur Karimov', subject: '10-A | Fizika', role: 'teacher', ranked: 1, active: 1 },
     { id: 3, name: 'Anvar Alimov', subject: '9-B | Matematika', role: 'teacher', ranked: 1, active: 1 },
     { id: 4, name: 'Disabled Teacher', subject: 'Kimyo', role: 'teacher', ranked: 1, active: 0 }
   ];
   const entries = [
     { uid: 2, ind: 1, status: 'approved', pts: 8, date: '2026-11-10' },
-    { uid: 2, ind: 14, status: 'approved', pts: 2, date: '2026-11-10' }, // T=10, A=8
+    { uid: 2, ind: 14, status: 'approved', pts: 2, date: '2026-11-10' },
     { uid: 3, ind: 1, status: 'approved', pts: 6, date: '2026-11-10' },
-    { uid: 3, ind: 14, status: 'approved', pts: 4, date: '2026-11-10' }  // T=10, A=6
+    { uid: 3, ind: 14, status: 'approved', pts: 4, date: '2026-11-10' }
   ];
   const rk = getRanking(users, entries);
   assert.equal(rk.length, 2);
-  assert.equal(rk[0].id, 2); // Higher Section A breaks tie
+  assert.equal(rk[0].id, 2);
   assert.equal(rk[0].rank, 1);
   assert.equal(rk[1].id, 3);
   assert.equal(rk[1].rank, 2);
@@ -125,7 +127,7 @@ await test('tempPw uses CSPRNG and produces strong temporary format without Math
   assert.equal(cfgSrc.includes('Math.random'), false, 'config.js must not use Math.random');
 });
 
-await test('validateProofFile verifies real PDF/PNG/JPEG magic bytes', async () => {
+await test('validateProofFile & validateImageFile verify real magic bytes', async () => {
   const makeMockFile = (name, bytes) => ({
     name,
     size: bytes.length,
@@ -136,6 +138,9 @@ await test('validateProofFile verifies real PDF/PNG/JPEG magic bytes', async () 
   await validateProofFile(makeMockFile('pic.jpg', new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46])));
   await assert.rejects(() => validateProofFile(makeMockFile('fake.pdf', new Uint8Array([0x3c, 0x73, 0x63, 0x72, 0x69, 0x70, 0x74, 0x3e]))));
   await assert.rejects(() => validateProofFile(makeMockFile('script.html', new Uint8Array([0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e, 0x00, 0x00]))));
+
+  await validateImageFile(makeMockFile('av.webp', new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50])));
+  await assert.rejects(() => validateImageFile(makeMockFile('av.png', new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]))));
 });
 
 // 3. Import & Login Uniqueness
@@ -145,14 +150,16 @@ await test('makeLogin handles Uzbek transliteration and deduplication', () => {
   assert.equal(extractSubjectLabel('10-A sinf | Ingliz tili'), 'Ingliz tili');
 });
 
-// 4. Static Codebase Integrity (Imports, Exports, No Emoji, No Browser alert/confirm/prompt)
-await test('All ES modules, assets, emoji-free UI, and non-blocking dialogs pass audit', async () => {
+// 4. Static Codebase Integrity (V6 Imports, Exports, Assets, No Emoji, No Blocking Dialogs)
+await test('All V6 ES modules, assets, emoji-free UI, and non-blocking dialogs pass audit', async () => {
   const files = [
-    'app.js', 'js/config.js', 'js/api.js', 'js/icons.js', 'js/ui.js', 'js/charts.js', 'js/command.js',
+    'app.js', 'js/config.js', 'js/api.js', 'js/icons.js', 'js/ui.js', 'js/motion.js', 'js/charts.js', 'js/command.js',
     'js/views/auth.js', 'js/views/dashboard.js', 'js/views/ranking.js', 'js/views/profile.js',
-    'js/views/entries.js', 'js/views/admin.js', 'js/views/monitoring.js'
+    'js/views/entries.js', 'js/views/admin.js', 'js/views/monitoring.js',
+    'js/views/activity.js', 'js/views/appeals.js', 'js/views/dev_plan.js'
   ];
   for (const f of files) {
+    assert.ok(fs.existsSync(f), `Missing file ${f}`);
     const src = fs.readFileSync(f, 'utf8');
     const dir = path.dirname(f);
     for (const m of src.matchAll(/import\s+\{([^}]+)\}\s+from\s+['"]([^'\"]+)['"]/g)) {
@@ -175,16 +182,28 @@ await test('All ES modules, assets, emoji-free UI, and non-blocking dialogs pass
   }
 });
 
-// 5. SQL Migration Parity Check (All 15 indicator IDs exist in calc_authoritative_pts)
-await test('SQL V4 migration contains all 15 indicators and security tables', () => {
-  const sql = fs.readFileSync('supabase/migrations/20261127_v4_security_monitoring.sql', 'utf8');
+// 5. SQL V4 + V6 Migration Checks
+await test('SQL V4 & V6 migrations contain all 15 indicators, security tables, and V6 module RPCs', () => {
+  const sqlV4 = fs.readFileSync('supabase/migrations/20261127_v4_security_monitoring.sql', 'utf8');
   for (const ind of IND) {
-    assert.ok(sql.includes(`when ${ind.id} then`), `Missing indicator ${ind.id} in SQL calc_authoritative_pts`);
+    assert.ok(sqlV4.includes(`when ${ind.id} then`), `Missing indicator ${ind.id} in SQL calc_authoritative_pts`);
   }
   for (const tbl of ['user_sessions', 'login_history', 'activity_logs', 'user_presence', 'notifications']) {
-    assert.ok(sql.includes(`public.${tbl}`), `Missing table ${tbl} in SQL migration`);
+    assert.ok(sqlV4.includes(`public.${tbl}`), `Missing table ${tbl} in V4 SQL migration`);
   }
-  assert.ok(sql.includes('enable row level security'), 'RLS must be enabled');
+
+  const sqlV6 = fs.readFileSync('supabase/migrations/20261127_v6_platform_upgrade.sql', 'utf8');
+  for (const tbl of ['appeals', 'appeal_messages', 'development_goals', 'development_tasks']) {
+    assert.ok(sqlV6.includes(`public.${tbl}`), `Missing table ${tbl} in V6 SQL migration`);
+  }
+  for (const rpc of [
+    'update_my_profile', 'update_my_preferences', 'get_my_sessions', 'revoke_my_session',
+    'get_my_activity', 'get_appeals', 'create_appeal', 'add_appeal_message', 'update_appeal_status',
+    'get_dev_goals', 'upsert_dev_goal', 'delete_dev_goal', 'upsert_dev_task', 'delete_dev_task'
+  ]) {
+    assert.ok(sqlV6.includes(`public.${rpc}`), `Missing RPC ${rpc} in V6 SQL migration`);
+  }
+  assert.ok(sqlV6.includes('enable row level security'), 'RLS must be enabled on V6 tables');
 });
 
 console.log(`\nALL ${passed} TESTS PASSED SUCCESSFULLY.`);

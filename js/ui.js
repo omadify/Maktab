@@ -1,4 +1,4 @@
-// Reusable UI utilities V2: escaping, CSV formula defense, themes, toasts, modals with focus trap, drawers, Tashkent TZ
+// Reusable UI Utilities V6: Escaping, CSV Defense, Themes, Transparency, Toasts, Modals/Sheets, Drawers, Avatars, Tashkent TZ
 import { icon } from './icons.js';
 
 export const $ = (sel, root = document) => root.querySelector(sel);
@@ -41,31 +41,52 @@ export async function copyToClipboard(text) {
   }
 }
 
+const UZ_MONTHS_SHORT = ['yan', 'fev', 'mar', 'apr', 'may', 'iyun', 'iyul', 'avg', 'sen', 'okt', 'noy', 'dek'];
+
+export function getTodayTashkent() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
+}
+
 export function formatDateUz(dateStr) {
   if (!dateStr) return '—';
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return esc(dateStr);
-  return d.toLocaleDateString('uz-UZ', { year: 'numeric', month: 'short', day: 'numeric' });
+  const mMatch = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (mMatch) {
+    const [, y, m, d] = mMatch;
+    return `${Number(d)} ${UZ_MONTHS_SHORT[(Number(m) - 1) % 12]}, ${y}`;
+  }
+  const dt = new Date(dateStr);
+  if (Number.isNaN(dt.getTime())) return esc(dateStr);
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Tashkent',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric'
+  }).formatToParts(dt);
+  const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+  return `${Number(map.day)} ${UZ_MONTHS_SHORT[(Number(map.month) - 1) % 12]}, ${map.year}`;
 }
 
 export function formatDateTimeTashkent(isoOrEpoch) {
   if (!isoOrEpoch) return '—';
-  const d = typeof isoOrEpoch === 'number'
+  const dt = typeof isoOrEpoch === 'number'
     ? new Date(isoOrEpoch < 1e12 ? isoOrEpoch * 1000 : isoOrEpoch)
     : new Date(isoOrEpoch);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString('uz-UZ', {
+  if (Number.isNaN(dt.getTime())) return '—';
+  const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Tashkent',
     year: 'numeric',
-    month: 'short',
+    month: 'numeric',
     day: 'numeric',
     hour: '2-digit',
-    minute: '2-digit'
-  });
+    minute: '2-digit',
+    hour12: false
+  }).formatToParts(dt);
+  const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+  return `${Number(map.day)} ${UZ_MONTHS_SHORT[(Number(map.month) - 1) % 12]}, ${map.year} · ${map.hour}:${map.minute}`;
 }
 
 /* ==========================================================================
-   THEME ENGINE
+   THEME & TRANSPARENCY ENGINE
    ========================================================================== */
 export function getThemePref() {
   return localStorage.getItem('reyting_theme') || 'system';
@@ -84,8 +105,23 @@ export function applyTheme(pref) {
   document.documentElement.setAttribute('data-theme-pref', valid);
   document.documentElement.style.colorScheme = resolved;
   const meta = document.getElementById('meta-theme-color');
-  if (meta) meta.setAttribute('content', resolved === 'dark' ? '#0B0E14' : '#F5F6F8');
+  if (meta) meta.setAttribute('content', resolved === 'dark' ? '#090D15' : '#F5F7FB');
   return resolved;
+}
+
+export function getTransparencyPref() {
+  return localStorage.getItem('reyting_transparency') || 'glass';
+}
+
+export function applyTransparencyPref(pref) {
+  const valid = pref === 'reduced' ? 'reduced' : 'glass';
+  localStorage.setItem('reyting_transparency', valid);
+  if (valid === 'reduced') {
+    document.documentElement.setAttribute('data-transparency', 'reduced');
+  } else {
+    document.documentElement.removeAttribute('data-transparency');
+  }
+  return valid;
 }
 
 export function initThemeListener(onChange) {
@@ -131,12 +167,22 @@ export function toast(message, type = 'info', duration = 3800) {
 }
 
 /* ==========================================================================
-   MODAL & RIGHT DETAIL DRAWER (Focus Trap + Focus Restoration)
+   MODAL, SHEET & RIGHT DETAIL DRAWER (Focus Trap + Unsaved Guard)
    ========================================================================== */
 let activeModalCleanup = null;
 let previousFocusEl = null;
+let modalCloseGuard = null;
 
-export function closeModal() {
+export function setModalCloseGuard(fn) {
+  modalCloseGuard = fn;
+}
+
+export async function closeModal(force = false) {
+  if (!force && modalCloseGuard) {
+    const allow = await modalCloseGuard();
+    if (!allow) return false;
+  }
+  modalCloseGuard = null;
   const root = document.getElementById('modal-root');
   if (root) root.innerHTML = '';
   if (activeModalCleanup) {
@@ -147,6 +193,7 @@ export function closeModal() {
     previousFocusEl.focus();
     previousFocusEl = null;
   }
+  return true;
 }
 
 function attachFocusTrap(container, onClose) {
@@ -173,8 +220,8 @@ function attachFocusTrap(container, onClose) {
   return () => document.removeEventListener('keydown', onKey);
 }
 
-export function openModal({ title, bodyHtml, footerHtml = '', size = 'md', onMount = null }) {
-  closeModal();
+export function openModal({ title, subtitle = '', bodyHtml, footerHtml = '', size = 'md', onMount = null }) {
+  closeModal(true);
   previousFocusEl = document.activeElement;
   const root = document.getElementById('modal-root');
   if (!root) return;
@@ -182,8 +229,12 @@ export function openModal({ title, bodyHtml, footerHtml = '', size = 'md', onMou
   root.innerHTML = `
     <div class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modal-title-el">
       <div class="modal-panel ${size === 'lg' ? 'modal-lg' : ''}">
+        <div class="sheet-handle" aria-hidden="true"></div>
         <div class="modal-head">
-          <h3 class="modal-title" id="modal-title-el">${esc(title)}</h3>
+          <div>
+            <h3 class="modal-title" id="modal-title-el">${esc(title)}</h3>
+            ${subtitle ? `<div style="font-size:12px;color:var(--text-muted);margin-top:2px">${esc(subtitle)}</div>` : ''}
+          </div>
           <button type="button" class="btn btn-ghost btn-icon btn-sm" id="modal-close-x" aria-label="Yopish">
             ${icon('x', 16)}
           </button>
@@ -196,9 +247,9 @@ export function openModal({ title, bodyHtml, footerHtml = '', size = 'md', onMou
 
   const backdrop = root.querySelector('.modal-backdrop');
   const panel = root.querySelector('.modal-panel');
-  root.querySelector('#modal-close-x').onclick = closeModal;
+  root.querySelector('#modal-close-x').onclick = () => closeModal();
   backdrop.onclick = e => { if (e.target === backdrop) closeModal(); };
-  activeModalCleanup = attachFocusTrap(panel, closeModal);
+  activeModalCleanup = attachFocusTrap(panel, () => closeModal());
 
   if (onMount) onMount(panel);
   const firstInput = panel.querySelector('input, textarea, select, button.btn-primary');
@@ -206,7 +257,7 @@ export function openModal({ title, bodyHtml, footerHtml = '', size = 'md', onMou
 }
 
 export function openDetailDrawer({ title, subtitle = '', bodyHtml, footerHtml = '', onMount = null }) {
-  closeModal();
+  closeModal(true);
   previousFocusEl = document.activeElement;
   const root = document.getElementById('modal-root');
   if (!root) return;
@@ -231,9 +282,9 @@ export function openDetailDrawer({ title, subtitle = '', bodyHtml, footerHtml = 
 
   const backdrop = root.querySelector('.drawer-right-backdrop');
   const panel = root.querySelector('.drawer-right-panel');
-  root.querySelector('#drawer-close-x').onclick = closeModal;
+  root.querySelector('#drawer-close-x').onclick = () => closeModal();
   backdrop.onclick = e => { if (e.target === backdrop) closeModal(); };
-  activeModalCleanup = attachFocusTrap(panel, closeModal);
+  activeModalCleanup = attachFocusTrap(panel, () => closeModal());
   if (onMount) onMount(panel);
 }
 
@@ -247,25 +298,25 @@ export function confirmDialog({ title, message, confirmText = 'Tasdiqlash', canc
         <button type="button" class="btn ${danger ? 'btn-danger' : 'btn-primary'}" id="cfm-ok">${esc(confirmText)}</button>
       `,
       onMount: panel => {
-        panel.querySelector('#cfm-cancel').onclick = () => { closeModal(); resolve(false); };
-        panel.querySelector('#cfm-ok').onclick = () => { closeModal(); resolve(true); };
+        panel.querySelector('#cfm-cancel').onclick = () => { closeModal(true); resolve(false); };
+        panel.querySelector('#cfm-ok').onclick = () => { closeModal(true); resolve(true); };
       }
     });
   });
 }
 
 /* ==========================================================================
-   AVATARS, BADGES, EMPTY STATES, SKELETONS, COUNTERS
+   AVATARS (PHOTO + INITIALS FALLBACK), BADGES, SWITCH, SKELETONS, COUNTERS
    ========================================================================== */
 const AVATAR_TONES = [
-  ['#EFF4FF', '#2448C7', 'rgba(36,72,199,0.22)'],
-  ['#F0FDFA', '#0F766E', 'rgba(15,118,110,0.22)'],
-  ['#F5F3FF', '#5B21B6', 'rgba(91,33,182,0.22)'],
-  ['#FFFBEB', '#B45309', 'rgba(180,83,9,0.22)'],
-  ['#F1F5F9', '#334155', 'rgba(51,65,85,0.22)']
+  ['#EFF4FF', '#2453BB', 'rgba(50,103,219,0.24)'],
+  ['#ECFDF5', '#0F766E', 'rgba(13,148,136,0.24)'],
+  ['#F5F3FF', '#5B21B6', 'rgba(91,33,182,0.24)'],
+  ['#FFFBEB', '#B45309', 'rgba(217,119,6,0.24)'],
+  ['#EDF2F8', '#334155', 'rgba(51,65,85,0.24)']
 ];
 
-export function avatarHtml(name, size = '') {
+export function avatarHtml(name, size = '', avatarUrl = null) {
   const parts = String(name || '?').trim().split(/\s+/);
   const initials = parts.length > 1
     ? `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase()
@@ -274,7 +325,14 @@ export function avatarHtml(name, size = '') {
   for (let i = 0; i < String(name).length; i++) hash = (hash * 31 + String(name).charCodeAt(i)) | 0;
   const [bg, fg, bd] = AVATAR_TONES[Math.abs(hash) % AVATAR_TONES.length];
   const sizeCls = size ? ` avatar-${size}` : '';
+  if (avatarUrl) {
+    return `<span class="avatar${sizeCls}" style="background:${bg};color:${fg};border-color:${bd}" aria-hidden="true"><img class="avatar-img" src="${esc(avatarUrl)}" alt="${esc(name || '')}" onerror="this.remove()"><span>${esc(initials)}</span></span>`;
+  }
   return `<span class="avatar${sizeCls}" style="background:${bg};color:${fg};border-color:${bd}" aria-hidden="true">${esc(initials)}</span>`;
+}
+
+export function renderSwitchHtml({ id, checked = false, label = '' }) {
+  return `<button type="button" role="switch" class="liquid-switch" id="${esc(id)}" aria-checked="${checked ? 'true' : 'false'}" aria-label="${esc(label)}"><span class="liquid-switch-thumb"></span></button>`;
 }
 
 export function badgeStatus(status) {
@@ -297,6 +355,7 @@ export function emptyStateHtml({ iconName = 'clipboard-list', title, desc, actio
 export function skeletonDashboardHtml() {
   return `
     <div class="stack-v">
+      <div class="skeleton" style="height:120px;width:100%;border-radius:22px"></div>
       <div class="kpi-grid">
         ${[1, 2, 3, 4].map(() => `
           <div class="kpi-card">
@@ -314,8 +373,8 @@ export function skeletonDashboardHtml() {
   `;
 }
 
-export function animateCounters(container = document) {
-  const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+export function animateCounters(container = document, skip = false) {
+  const reduced = skip || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   container.querySelectorAll('[data-count]').forEach(el => {
     const target = Number(el.dataset.count);
     const decimals = Number(el.dataset.decimals || 0);
@@ -325,7 +384,7 @@ export function animateCounters(container = document) {
       return;
     }
     const start = performance.now();
-    const duration = 480;
+    const duration = 460;
     const step = now => {
       const p = Math.min(1, (now - start) / duration);
       const eased = 1 - Math.pow(1 - p, 3);

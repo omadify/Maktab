@@ -1,0 +1,96 @@
+/* ==========================================================================
+   MOTION DESIGN SYSTEM V6
+   GPU-composited transform & opacity choreography + Reduced Motion Safety
+   ========================================================================== */
+
+@keyframes v6FadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes v6PageEnter {
+  from { opacity: 0; transform: translate3d(0, 10px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes v6StaggerUp {
+  from { opacity: 0; transform: translate3d(0, 12px, 0) scale(0.99); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes v6ModalPop {
+  from { opacity: 0; transform: scale(0.95) translate3d(0, 10px, 0); }
+  to { opacity: 1; transform: scale(1) translate3d(0, 0, 0); }
+}
+
+@keyframes v6SheetSlideUp {
+  from { opacity: 0; transform: translate3d(0, 100%, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes v6DrawerLeft {
+  from { opacity: 0.7; transform: translate3d(100%, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes v6PopoverEnter {
+  from { opacity: 0; transform: scale(0.95) translate3d(0, -6px, 0); }
+  to { opacity: 1; transform: scale(1) translate3d(0, 0, 0); }
+}
+
+@keyframes v6ToastEnter {
+  from { opacity: 0; transform: translate3d(0, 12px, 0) scale(0.96); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes v6RingDraw {
+  from { stroke-dashoffset: var(--ring-circ, 400); }
+  to { stroke-dashoffset: var(--ring-offset, 0); }
+}
+
+@keyframes v6Shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes v6Spin {
+  to { transform: rotate(360deg); }
+}
+
+.anim-spin { animation: v6Spin 900ms linear infinite; }
+
+.page-enter {
+  animation: v6PageEnter var(--dur-page) var(--ease-out) both;
+}
+.no-anim {
+  animation: none !important;
+}
+
+/* Staggered entrance (35–65ms intervals) — disabled when .no-anim parent is present */
+.stagger-item {
+  animation: v6StaggerUp var(--dur-sheet) var(--ease-out) backwards;
+}
+.stagger-item:nth-child(1) { animation-delay: 25ms; }
+.stagger-item:nth-child(2) { animation-delay: 65ms; }
+.stagger-item:nth-child(3) { animation-delay: 105ms; }
+.stagger-item:nth-child(4) { animation-delay: 145ms; }
+.stagger-item:nth-child(5) { animation-delay: 185ms; }
+.stagger-item:nth-child(6) { animation-delay: 225ms; }
+
+.no-anim .stagger-item,
+.no-anim .kpi-card {
+  animation: none !important;
+}
+
+.progress-ring-arc {
+  animation: v6RingDraw 720ms var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

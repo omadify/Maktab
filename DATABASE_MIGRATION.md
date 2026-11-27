@@ -1,30 +1,25 @@
-# DATABASE MIGRATION GUIDE — V4.0
+# DATABASE MIGRATION GUIDE — V6.0
 
-## 1. Umumiy Qoidalar
-- Barcha o‘zgarishlar [20261127_v4_security_monitoring.sql](file:///workspaces/Maktab/supabase/migrations/20261127_v4_security_monitoring.sql) faylida jamlangan.
-- Migratsiya **backward-compatible**, **idempotent** va **non-destructive** (`DROP TABLE` yoki `TRUNCATE` ishlatmaydi).
-- Mavjud `users.id`, `entries.id`, `uid` bog‘lanishlari va hujjat havolalari (`fpath`) to‘liq saqlanadi.
+## 1. Migratsiya Fayllari Ketma-Ketligi
+1. **Asosiy V4 Xavfsizlik va Monitoring migratsiyasi:** [20261127_v4_security_monitoring.sql](file:///workspaces/Maktab/supabase/migrations/20261127_v4_security_monitoring.sql)
+2. **V6 Platforma Yangilanishi (Profil, Faoliyat, Murojaatlar, Rivojlanish Rejasi):** [20261127_v6_platform_upgrade.sql](file:///workspaces/Maktab/supabase/migrations/20261127_v6_platform_upgrade.sql)
+3. **Ixtiyoriy Private Storage migratsiyasi:** [20261127_v4_private_storage_optional.sql](file:///workspaces/Maktab/supabase/migrations/20261127_v4_private_storage_optional.sql) *(faqat Signed URL backend xizmati yoqilgandan keyin)*
 
-## 2. Migratsiya Tartibi (Qo‘lda Tasdiqlash Bilan)
-1. **Zaxira nusxa (Backup):** Supabase Dashboard -> Database -> Backups bo‘limidan joriy bazaning snapshotini oling.
-2. **Asosiy V4 migratsiyani ishga tushirish:**
-   - Supabase Dashboard -> SQL Editor ga kiring.
-   - `supabase/migrations/20261127_v4_security_monitoring.sql` tarkibini nusxalab **Run** tugmasini bosing.
-   - Ushbu skript:
-     - `pgcrypto` ni yoqadi;
-     - `users` va `entries` ga yangi ustunlarni (`pw_hash`, `last_login_at`, `last_active_at`, `reviewed_at`) qo‘shadi;
-     - Mavjud ochiq parollarni `bcrypt` (`pw_hash`) ga o‘tkazadi;
-     - `user_sessions`, `login_history`, `activity_logs`, `user_presence`, `notifications` jadvallarini yaratadi;
-     - Barcha `SECURITY DEFINER` RPC larni yaratib, jadvallarda RLS ni yoqadi.
-3. **Autentifikatsiyani tekshirish:**
-   - Direktor, IT mutaxassis, mas’ul va pedagog akkauntlari bilan tizimga kirib ko‘ring.
-   - Birinchi muvaffaqiyatli kirishlar `pw_hash` orqali tekshirilishini tasdiqlang.
-4. **Ixtiyoriy tozalash (faqat barcha foydalanuvchilar tekshirilgandan keyin):**
-   - Barcha `users` qatorlarida `pw_hash IS NOT NULL` ekanligini tekshirgach, eski ochiq matndagi `pw` ustunini bo‘shatish mumkin (`update public.users set pw = '' where pw_hash is not null;`).
-5. **Private Storage ([20261127_v4_private_storage_optional.sql](file:///workspaces/Maktab/supabase/migrations/20261127_v4_private_storage_optional.sql)):**
-   - Faqat Signed URL xizmati (masalan, Supabase Edge Function) deploy qilingandan so‘ng ishga tushiring; aks holda avvalgi public `fpath` havolalari ochilmay qoladi.
+## 2. Xavfsizlik va Ma’lumotlarni Saqlash Kafolatlari
+- Barcha migratsiyalar **additive**, **idempotent** va **non-destructive** (`DROP TABLE` yoki `TRUNCATE` ishlatilmaydi).
+- Mavjud `users.id`, `entries.id`, `uid`, 26-AF ballari, portfoliolar va fayl havolalari to‘liq saqlanadi.
+- Production bazaga o‘zgarish kiritishdan oldin **albatta staging’da sinov** va **to‘liq backup** olinishi shart.
 
-## 3. Rollback (Ortga Qaytarish) Rejasi
-- Agar migratsiyadan keyin kutilmagan muammo yuzaga kelsa:
-  1. 1-bosqichda olingan Supabase backup’ni tiklang, **yoki**
-  2. `users` va `entries` jadvallarida `alter table ... disable row level security;` va eski `login_user` RPC grantsini tiklash orqali vaqtincha legacy rejimga qaytish mumkin (chunki `users` va `entries` ma’lumotlari o‘chirilmagan).
+## 3. V6 Qo‘shimcha Jadvallar va Ustunlar
+- `public.users`: `bio`, `avatar_url`, `cover_style`, `cover_url`, `phone`, `telegram_handle`, `contact_public`, `preferences`.
+- `public.appeals` va `public.appeal_messages`: murojaatlar, apellyatsiyalar va muhokama tarixi.
+- `public.development_goals` va `public.development_tasks`: shaxsiy rivojlanish maqsadlari va vazifalar ro‘yxati.
+
+## 4. Qo‘llash Tartibi
+1. Supabase Dashboard -> Database -> Backups bo‘limidan snapshot oling.
+2. SQL Editor’da avval `20261127_v4_security_monitoring.sql` ni (agar hali bajarilmagan bo‘lsa), so‘ng `20261127_v6_platform_upgrade.sql` ni ishga tushiring.
+3. To‘rtta rol (`director`, `it_admin`, `reviewer`, `teacher`) bilan kirib, profil tahrirlash, murojaat yaratish, rivojlanish rejasi va `get_my_activity` ishlashini tekshiring.
+
+## 5. Rollback Rejasi
+- 1-variant: Backup snapshot’ni tiklash.
+- 2-variant: V6 da qo‘shilgan jadvallar mavjud `users` va `entries` ishiga ta’sir qilmaydi; kerak bo‘lsa V6 RPC grantlarini bekor qilish kifoya.

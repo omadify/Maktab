@@ -108,7 +108,7 @@ export function filterEntriesByPeriod(entries, period = 'all') {
 }
 
 export function getRanking(users, entries, period = 'all') {
-  const rankedUsers = (users || []).filter(u => u.active && u.ranked);
+  const rankedUsers = (users || []).filter(u => u.active && u.ranked && u.role === 'teacher');
   const filteredEntries = filterEntriesByPeriod(entries || [], period);
   const byUid = {};
   for (const e of filteredEntries) {
@@ -197,7 +197,8 @@ export function getDeadlines() {
   if (d25 < t0) d25 = new Date(n.getFullYear(), n.getMonth() + 1, 25);
   const n20 = Math.round((d20 - t0) / 864e5);
   const n25 = Math.round((d25 - t0) / 864e5);
-  const fmt = d => d.toLocaleDateString('uz-UZ', { day: 'numeric', month: 'long' });
+  const monthsLong = ['yanvar', 'fevral', 'mart', 'aprel', 'may', 'iyun', 'iyul', 'avgust', 'sentabr', 'oktabr', 'noyabr', 'dekabr'];
+  const fmt = d => `${d.getDate()}-${monthsLong[d.getMonth()]}`;
   return { d20Label: fmt(d20), d25Label: fmt(d25), n20, n25 };
 }
 

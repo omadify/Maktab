@@ -2,6 +2,7 @@
 import { ROLE } from '../config.js';
 import { icon } from '../icons.js';
 import { $, $$, esc, avatarHtml, emptyStateHtml, formatDateTimeTashkent, openDetailDrawer } from '../ui.js';
+import { syncLiquidPills } from '../motion.js';
 
 let monFilter = {
   actSearch: '',
@@ -427,4 +428,5 @@ function renderPresenceView(el, ctx, presence, nowMs) {
   $$('[data-pf]').forEach(b => {
     b.onclick = () => { monFilter.presFilter = b.dataset.pf; renderPresenceView(el, ctx, presence, nowMs); };
   });
+  syncLiquidPills(el);
 }

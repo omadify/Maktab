@@ -2,9 +2,9 @@
 <html lang="uz">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="Norin tuman ixtisoslashtirilgan maktabi — 26-AF buyruq asosidagi pedagoglar reyting va samaradorlik tahlili platformasi.">
-  <meta name="theme-color" content="#F5F6F8" id="meta-theme-color">
+  <meta name="theme-color" content="#F5F7FB" id="meta-theme-color">
   <title>Pedagog Reyting — Norin tuman ixtisoslashtirilgan maktabi</title>
   <script>
     (function () {
@@ -15,8 +15,10 @@
         document.documentElement.setAttribute('data-theme', resolved);
         document.documentElement.setAttribute('data-theme-pref', saved);
         document.documentElement.style.colorScheme = resolved;
+        var tr = localStorage.getItem('reyting_transparency') || 'glass';
+        if (tr === 'reduced') document.documentElement.setAttribute('data-transparency', 'reduced');
         var meta = document.getElementById('meta-theme-color');
-        if (meta) meta.setAttribute('content', resolved === 'dark' ? '#0B0E14' : '#F5F6F8');
+        if (meta) meta.setAttribute('content', resolved === 'dark' ? '#090D15' : '#F5F7FB');
       } catch (e) {}
     })();
   </script>
@@ -24,12 +26,15 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/liquid-glass.css">
+  <link rel="stylesheet" href="css/motion.css">
   <link rel="stylesheet" href="css/components.css">
   <link rel="stylesheet" href="style.css">
   <!-- SheetJS for lightweight in-browser Excel (.xlsx) parsing without server burden -->
   <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
+  <div class="ambient-backdrop noprint" aria-hidden="true"></div>
   <div id="root"></div>
   <div id="modal-root"></div>
   <div id="toast-root" aria-live="polite" aria-atomic="true"></div>

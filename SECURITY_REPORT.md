@@ -1,26 +1,23 @@
-# SECURITY REPORT — V4.0
+# SECURITY REPORT — MAKTAB PLATFORM V6
 
-## 1. Autentifikatsiya va Sessiya Xavfsizligi
-- **Oldingi holat (Production’dagi joriy sxema):** `supabase_schema.sql` da `users.pw` ochiq matnda saqlanadi; `sessionStorage` ichidagi rol client-side saqlanadi; V4 migratsiyasi qo‘llanmagan bazalarda `js/api.js` orqaga mos ravishda standart `login_user` RPC bilan ishlaydi.
-- **V4 Migratsiya yechimi ([20261127_v4_security_monitoring.sql](file:///workspaces/Maktab/supabase/migrations/20261127_v4_security_monitoring.sql)):**
-  - `pgcrypto` orqali `bcrypt` (`crypt(..., gen_salt('bf', 10))`) parol xeshlash (`users.pw_hash`).
-  - `auth_login` RPC 10 daqiqa ichida 5 ta muvaffaqiyatsiz urinishdan keyin brute-force rate limit qo‘llaydi.
-  - Server-side `user_sessions` jadvalida `SHA-256` token xeshi (`token_hash`) saqlanadi.
-  - `_verify_session(p_token)` funksiyasi token muddati, `revoked_at`, `active = 1` va `u.role = s.role_snapshot` shartlarini tekshiradi — rol o‘zgarganda eski sessiya avtomatik bekor bo‘ladi.
+## 1. Autentifikatsiya va Sessiya Boshqaruvi
+- V4 migratsiyada joriy etilgan `pgcrypto` (`bcrypt` `pw_hash`), brute-force rate limit (10 daqiqada 5 urinish) va `SHA-256` tokenli `user_sessions` jadvali to‘liq saqlanadi.
+- V6 da **Faol sessiyalar** boshqaruvi (`get_my_sessions`, `revoke_my_session`) qo‘shildi: foydalanuvchi o‘z qurilmalarini ko‘rib, begona/eski sessiyalarni serverda bekor qila oladi.
+- `app.js` va `js/api.js` da sessiya muddati tugashi yoki serverda bekor qilinishi aniqlansa, ilova xavfsiz tarzda login ekraniga qaytariladi (`handleLogout` + barcha modul holatlarini tozalash).
 
-## 2. RLS va Rollarga Asoslangan Ruxsatlar
-- **Default-Deny RLS:** V4 migratsiyada `users`, `entries`, `user_sessions`, `login_history`, `activity_logs`, `user_presence`, `notifications` jadvallarida RLS yoqilib, `anon` va `authenticated` dan to‘g‘ridan-to‘g‘ri jadval ruxsatlari (`REVOKE ALL`) olib tashlanadi.
-- **Client ma’lumotlariga ishonmaslik:**
-  - `submit_entry` RPC ball (`pts`) qiymatini serverda `calc_authoritative_pts()` orqali qayta hisoblaydi.
-  - `review_entry_atomic` RPC indikator egasini (`reviewer_can_review`) va o‘z arizasini tasdiqlamaslik qoidasini serverda tekshiradi hamda `FOR UPDATE` bilan race condition’ni oldini oladi.
-  - `admin_create_users` va `admin_update_user` IT mutaxassisning direktor rolini berishi/tahrirlashini hamda oxirgi faol direktorning o‘chirilishini bloklaydi.
-- **Maxfiy profil ma’lumotlari:** `get_workspace_data` oddiy `teacher` roliga boshqa pedagoglarning kutilayotgan/rad etilgan yutuqlari, izohlari, loginlari va hujjat havolalarini qaytarmaydi.
+## 2. Rollarga Asoslangan Ruxsatlar (RBAC & RLS)
+- **Default-Deny RLS:** V4 va V6 jadvallarining barchasida (`users`, `entries`, `user_sessions`, `login_history`, `activity_logs`, `user_presence`, `notifications`, `appeals`, `appeal_messages`, `development_goals`, `development_tasks`) Row Level Security yoqilgan va `anon`/`authenticated` rollaridan to‘g‘ridan-to‘g‘ri jadval huquqlari (`REVOKE ALL`) olingan.
+- **Profil tahrirlash xavfsizligi (`update_my_profile`):** Foydalanuvchi faqat shaxsiy maydonlarni (`bio`, `avatar_url`, `cover_style`, `cover_url`, `phone`, `telegram_handle`, `contact_public`) yangilay oladi. `role`, `name`, `subject`, `ranked`, `active` maydonlari brauzer orqali o‘zgartirilishi serverda bloklangan.
+- **Aloqa ma’lumotlari maxfiyligi:** `phone` va `telegram_handle` faqat profil egasiga, direktorga yoki `contact_public = true` bo‘lganda ko‘rinadi.
+- **Shaxsiy faoliyat izolyatsiyasi (`get_my_activity`):** Har bir pedagog faqat o‘zining harakatlari va o‘z arizalariga oid qarorlarni ko‘radi; boshqa pedagoglarning shaxsiy audit yozuvlari hech qachon ochilmaydi.
+- **Murojaatlar va Rivojlanish rejasi:**
+  - `create_appeal` murojaatchining `entry_id` ga egaligini serverda tekshiradi va **hech qachon `entries.pts` yoki `entries.status` ni avtomatik o‘zgartirmaydi**.
+  - `get_dev_goals`, `upsert_dev_goal`, `upsert_dev_task` faqat `v_sess.uid` egasining maqsadlariga ruxsat beradi.
 
-## 3. Storage va Fayl Xavfsizligi
-- Brauzerda yuklashdan oldin `validateProofFile()` fayl hajmi (`<= 15 MB`), kengaytma va haqiqiy **magic header baytlari** (`%PDF`, `PNG`, `JPEG`) ni tekshiradi.
-- DB yozish muvaffaqiyatsiz tugasa, `deleteProofObject()` yetim faylni o‘chiradi.
-- `proofs` bucketni yopiq (`public = false`) holatga o‘tkazish uchun alohida [20261127_v4_private_storage_optional.sql](file:///workspaces/Maktab/supabase/migrations/20261127_v4_private_storage_optional.sql) tayyorlandi (Signed URL generatsiyasi tayyor bo‘lgandan keyin qo‘llanishi kerak).
+## 3. Fayl va Media Tekshiruvi
+- Hujjatlar (`validateProofFile`: PDF, PNG, JPEG <= 15 MB) va profil rasmlari (`validateImageFile`: PNG, JPG, WEBP <= 5 MB) haqiqiy **magic header baytlari** bo‘yicha tekshiriladi.
+- CSV eksportlarda `csvCell()` formula injection (`=`, `+`, `-`, `@`) ni neytrallaydi.
+- `tempPw()` Web Crypto API (`crypto.getRandomValues`) dan foydalanadi.
 
-## 4. Qolgan Xavflar (Migratsiya Qo‘llanmaguncha)
-- **Muhim ogohlantirish:** Yuqoridagi V4 SQL migratsiyasi Supabase production bazasida hali ishga tushirilmagan! Migratsiya bajarilmaguncha production’da eski `supabase_schema.sql` qoidalari (ochiq matn parol va RLS’siz jadvallar) amal qiladi.
-- `scripts/build-public.mjs` orqali `dist/` ga faqat frontend fayllari ajratilgan bo‘lsa-da, `render.yaml` yangilanmaguncha root `.` publish qilinishda davom etadi.
+## 4. Production Ogohlantirish
+- `20261127_v4_security_monitoring.sql` va `20261127_v6_platform_upgrade.sql` Supabase production bazasiga qo‘lda (backupdan keyin) qo‘llanmaguncha, masofaviy bazada avvalgi jadval/RPC qoidalari amal qiladi.

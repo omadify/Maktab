@@ -1,18 +1,30 @@
-// Achievement Submission (Draft Persistence, Magic Validation, Orphan Cleanup), Split-Panel Review Center & Interactive Criteria
+// Achievement Submission, Split-Panel Review Center (Desktop + Mobile Sheet) & Criteria Explorer V6
 import { IND, IMAP, SEC, calcAuthoritativePts } from '../config.js';
 import { api, validateProofFile } from '../api.js';
 import { icon } from '../icons.js';
-import { $, $$, esc, toast, badgeStatus, emptyStateHtml, formatDateUz, avatarHtml } from '../ui.js';
+import { $, $$, esc, toast, badgeStatus, emptyStateHtml, formatDateUz, avatarHtml, openDetailDrawer, closeModal, getTodayTashkent } from '../ui.js';
+import { syncLiquidPills } from '../motion.js';
 
 let revState = { status: 'pending', search: '', ind: 'all', selectedId: null };
 let critState = { sec: 'all', search: '' };
 let draftForm = { ind: '', type: '', qty: 1, date: '', descr: '', file: null, previewUrl: null };
 
+export function resetEntriesViewState() {
+  if (draftForm.previewUrl) URL.revokeObjectURL(draftForm.previewUrl);
+  revState = { status: 'pending', search: '', ind: 'all', selectedId: null };
+  critState = { sec: 'all', search: '' };
+  draftForm = { ind: '', type: '', qty: 1, date: '', descr: '', file: null, previewUrl: null };
+}
+
 /* ==========================================================================
    1. YUTUQ QO'SHISH (Achievement Submission)
    ========================================================================== */
 export function renderAddEntry(el, ctx) {
-  const today = new Date().toISOString().slice(0, 10);
+  if (ctx.me.role !== 'teacher') {
+    el.innerHTML = `<div class="card">${emptyStateHtml({ iconName: 'shield', title: 'Faqat pedagoglar uchun', desc: 'Mas’ul baholovchilar va rahbariyat faqat tekshiruvchi hisoblanadi, reytingga ball kiritmaydi.' })}</div>`;
+    return;
+  }
+  const today = getTodayTashkent();
   if (!draftForm.date) draftForm.date = today;
 
   el.innerHTML = `
@@ -31,7 +43,7 @@ export function renderAddEntry(el, ctx) {
         <div class="card">
           <form id="af" class="stack-v" style="gap:16px">
             <div class="field">
-              <label for="ai">Baholash mezoni (Indikator)</label>
+              <label for="ai">1. Baholash mezoni (Indikator)</label>
               <select id="ai" class="input" required>
                 <option value="">— Mezonni tanlang —</option>
                 ${['A', 'B', 'C'].map(secKey => `
@@ -46,7 +58,7 @@ export function renderAddEntry(el, ctx) {
 
             <div id="at-wrap" style="display:none" class="stack-v">
               <div class="field">
-                <label for="at">Yutuq turi va darajasi</label>
+                <label for="at">2. Yutuq turi va darajasi</label>
                 <select id="at" class="input" required></select>
               </div>
               <div id="adoc" class="form-alert info"></div>
@@ -54,27 +66,27 @@ export function renderAddEntry(el, ctx) {
 
             <div class="grid-2">
               <div class="field">
-                <label for="aq">Soni (o‘quvchi yoki sinflar soni)</label>
+                <label for="aq">3. Soni (o‘quvchi yoki sinflar soni)</label>
                 <input id="aq" class="input" type="number" min="1" max="50" value="${esc(draftForm.qty)}" required>
               </div>
               <div class="field">
-                <label for="adt">Yutuq sanasi</label>
+                <label for="adt">4. Yutuq sanasi</label>
                 <input id="adt" class="input" type="date" value="${esc(draftForm.date)}" required>
               </div>
             </div>
 
-            <div id="pts-preview-box" style="display:none;padding:12px 14px;border-radius:10px;background:var(--primary-soft);border:1px solid var(--primary-border);align-items:center;justify-content:space-between">
+            <div id="pts-preview-box" style="display:none;padding:13px 15px;border-radius:12px;background:var(--primary-soft);border:1px solid var(--primary-border);align-items:center;justify-content:space-between">
               <span style="font-size:13px;font-weight:500;color:var(--text-2)">Hisoblanadigan ball (server tekshiradi)</span>
-              <span id="pts-preview" style="font-size:16px;font-weight:700;color:var(--primary)"></span>
+              <span id="pts-preview" style="font-size:17px;font-weight:700;color:var(--primary)"></span>
             </div>
 
             <div class="field">
-              <label for="ad">Batafsil tavsif</label>
+              <label for="ad">5. Batafsil tavsif</label>
               <textarea id="ad" class="input" rows="3" placeholder="Masalan: 10-A sinf o‘quvchisi Anvarov Bobur IELTS 7.5 sertifikatini oldi (sertifikat raqami, sana)…" required>${esc(draftForm.descr)}</textarea>
             </div>
 
             <div class="field">
-              <label>Tasdiqlovchi hujjat (PDF, JPG, PNG — 15 MB gacha)</label>
+              <label>6. Tasdiqlovchi hujjat (PDF, JPG, PNG — 15 MB gacha)</label>
               <div class="dropzone" id="af-dropzone" tabindex="0" role="button" aria-label="Hujjat faylini tanlash">
                 <input id="af-file" type="file" accept=".pdf,.jpg,.jpeg,.png" style="display:none">
                 <div id="af-dz-body" style="display:flex;flex-direction:column;align-items:center;gap:6px">
@@ -83,7 +95,7 @@ export function renderAddEntry(el, ctx) {
                   <div style="font-size:12px;color:var(--text-muted)">Format va hajm serverdan oldin tekshiriladi</div>
                 </div>
               </div>
-              <div id="af-file-preview" style="display:none;margin-top:8px;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg-subtle);align-items:center;justify-content:space-between;gap:10px"></div>
+              <div id="af-file-preview" style="display:none;margin-top:8px;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--surface-soft);align-items:center;justify-content:space-between;gap:10px"></div>
             </div>
 
             <div id="af-err" class="form-alert error" style="display:none" role="alert">
@@ -100,7 +112,7 @@ export function renderAddEntry(el, ctx) {
         <div class="card" style="height:fit-content">
           <div class="card-header"><div><h3 class="card-title">Yuborish qoidalari</h3><p class="card-subtitle">Xavfsiz va tez tasdiqlash bo‘yicha eslatma</p></div></div>
           <div style="display:flex;flex-direction:column;gap:12px;font-size:13px;color:var(--text-2)">
-            <div style="display:flex;gap:10px;align-items:flex-start"><span style="color:var(--primary)">${icon('check-circle', 16)}</span><span>Ballar 26-AF buyruq limitlariga muvofiq avtomatik hisoblanadi.</span></div>
+            <div style="display:flex;gap:10px;align-items:flex-start"><span style="color:var(--primary)">${icon('check-circle', 16)}</span><span>Ballar 26-AF buyruq limitlariga muvofiq serverda avtomatik hisoblanadi.</span></div>
             <div style="display:flex;gap:10px;align-items:flex-start"><span style="color:var(--primary)">${icon('paperclip', 16)}</span><span>Faqat haqiqiy PDF, JPG yoki PNG skanlar qabul qilinadi.</span></div>
             <div style="display:flex;gap:10px;align-items:flex-start"><span style="color:var(--primary)">${icon('clock', 16)}</span><span>Mas’ul ekspert tasdiqlaganidan so‘ng ball reytingga qo‘shiladi.</span></div>
           </div>
@@ -111,6 +123,7 @@ export function renderAddEntry(el, ctx) {
 
   $('#add-crit-link').onclick = () => ctx.navigate('criteria');
   $('#cancel-add-btn').onclick = () => {
+    if (draftForm.previewUrl) URL.revokeObjectURL(draftForm.previewUrl);
     draftForm = { ind: '', type: '', qty: 1, date: today, descr: '', file: null, previewUrl: null };
     ctx.setDirtyForm(false);
     ctx.navigate('my_results');
@@ -133,7 +146,7 @@ export function renderAddEntry(el, ctx) {
     previewBox.innerHTML = `
       <div style="display:flex;align-items:center;gap:10px;min-width:0">
         ${draftForm.previewUrl
-          ? `<img src="${draftForm.previewUrl}" alt="Yuklangan rasm" style="width:42px;height:42px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">`
+          ? `<img src="${draftForm.previewUrl}" alt="Yuklangan rasm" style="width:44px;height:44px;object-fit:cover;border-radius:8px;border:1px solid var(--border)">`
           : `<div class="kpi-icon primary">${icon('file-text', 17)}</div>`}
         <div style="min-width:0">
           <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(f.name)}</div>
@@ -273,7 +286,6 @@ export function renderAddEntry(el, ctx) {
       await ctx.refresh();
       ctx.navigate('my_results');
     } catch (err) {
-      // Orphan file cleanup if upload succeeded but DB insert failed
       if (uploadedObject) {
         await api.deleteProofObject(uploadedObject);
       }
@@ -286,10 +298,11 @@ export function renderAddEntry(el, ctx) {
 }
 
 /* ==========================================================================
-   2. SPLIT-PANEL REVIEW CENTER (Director & Reviewer)
+   2. SPLIT-PANEL REVIEW CENTER (Desktop Split + Mobile Sheet)
    ========================================================================== */
 export function renderReviews(el, ctx) {
   const { me, users, entries } = ctx;
+  const userMap = new Map(users.map(u => [u.id, u]));
   const isDirector = me.role === 'director';
 
   const scopedEntries = entries.filter(e => {
@@ -343,13 +356,104 @@ export function renderReviews(el, ctx) {
     </div>
   `;
 
+  function buildDetailHtml(sel) {
+    const owner = userMap.get(sel.uid);
+    const ind = IMAP[sel.ind];
+    const isOwn = sel.uid === me.id;
+    const isImg = sel.fpath && /\.(png|jpe?g|webp)(\?|$)/i.test(sel.fpath);
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:12px">
+          ${avatarHtml(owner?.name || '?', 'lg', owner?.avatar_url)}
+          <div>
+            <div style="font-size:16px;font-weight:700">${esc(owner?.name || 'Noma’lum')}</div>
+            <div style="font-size:12.5px;color:var(--text-muted)">${esc(owner?.subject || 'Pedagog')} · ${formatDateUz(sel.date)}</div>
+          </div>
+        </div>
+        <div style="text-align:right">
+          ${badgeStatus(sel.status)}
+          <div style="font-size:20px;font-weight:700;color:var(--primary);margin-top:4px">+${sel.pts} ball</div>
+        </div>
+      </div>
+
+      <div class="stack-v" style="gap:14px;margin-top:16px">
+        <div style="padding:12px 14px;border-radius:12px;background:var(--surface-soft);border:1px solid var(--border)">
+          <div style="font-size:12px;color:var(--text-muted)">Mezon va yutuq turi</div>
+          <div style="font-weight:600;margin-top:2px">${sel.ind}. ${esc(ind?.name || '')} (maks: ${ind?.max || 0} ball)</div>
+          <div style="font-size:13px;color:var(--primary);margin-top:3px">${esc(sel.type)} × ${sel.qty} ta</div>
+          <div style="font-size:11.5px;color:var(--text-muted);margin-top:4px">Mas’ul: ${esc(ind?.respStr || '')}</div>
+        </div>
+
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:4px">Pedagog tavsifi</div>
+          <div style="font-size:13.5px;line-height:1.55;color:var(--text)">${esc(sel.descr)}</div>
+        </div>
+
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Tasdiqlovchi hujjat</div>
+          ${sel.fpath ? `
+            <div style="display:flex;flex-direction:column;gap:8px">
+              ${isImg ? `<img src="${esc(sel.fpath)}" alt="Tasdiqlovchi hujjat" style="max-height:240px;width:100%;object-fit:contain;border-radius:10px;border:1px solid var(--border);background:var(--surface-soft)">` : ''}
+              <div>
+                <a href="${esc(sel.fpath)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${icon('external-link', 14)} Hujjatni ochish (${esc(sel.fname || 'Fayl')})</a>
+              </div>
+            </div>
+          ` : '<span style="font-size:13px;color:var(--text-muted)">Hujjat biriktirilmagan</span>'}
+        </div>
+
+        ${isOwn && !isDirector ? `
+          <div class="form-alert warning">
+            ${icon('shield', 16)}
+            <span>O‘z yutug‘ingizni tasdiqlay olmaysiz. Uni boshqa mas’ul ekspert yoki direktor ko‘rib chiqadi.</span>
+          </div>
+        ` : `
+          <div class="field" style="padding-top:8px;border-top:1px solid var(--border)">
+            <label for="rev-inline-note">Ekspert izohi (rad etilganda sabab majburiy)</label>
+            <textarea id="rev-inline-note" class="input" rows="2" placeholder="Izoh yoki rad etish sababini yozing…">${esc(sel.note || '')}</textarea>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            ${sel.status !== 'approved' ? `<button type="button" class="btn btn-success" id="rev-do-approve" style="flex:1">${icon('check', 15)} Tasdiqlash</button>` : ''}
+            ${sel.status !== 'rejected' ? `<button type="button" class="btn btn-danger" id="rev-do-reject" style="flex:1">${icon('x', 15)} Rad etish</button>` : ''}
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  function bindDecisionHandlers(container, sel, onDone) {
+    const handleDecision = async status => {
+      const note = ($('#rev-inline-note', container)?.value || '').trim();
+      if (status === 'rejected' && !note) {
+        return toast('Rad etish uchun sabab kiritilishi shart.', 'warning');
+      }
+      const b1 = $('#rev-do-approve', container);
+      const b2 = $('#rev-do-reject', container);
+      if (b1) b1.disabled = true;
+      if (b2) b2.disabled = true;
+      try {
+        await api.reviewEntry(sel.id, status, note, me.id);
+        toast(status === 'approved' ? 'Yutuq muvaffaqiyatli tasdiqlandi.' : 'Ariza rad etildi.', status === 'approved' ? 'success' : 'info');
+        if (onDone) onDone();
+        await ctx.refresh();
+      } catch (err) {
+        toast('Xatolik: ' + err.message, 'error');
+        if (b1) b1.disabled = false;
+        if (b2) b2.disabled = false;
+      }
+    };
+    const appBtn = $('#rev-do-approve', container);
+    if (appBtn) appBtn.onclick = () => handleDecision('approved');
+    const rejBtn = $('#rev-do-reject', container);
+    if (rejBtn) rejBtn.onclick = () => handleDecision('rejected');
+  }
+
   function renderSplit() {
     const q = revState.search.trim().toLowerCase();
     const filtered = scopedEntries.filter(e => {
       if (revState.status !== 'all' && e.status !== revState.status) return false;
       if (revState.ind !== 'all' && String(e.ind) !== revState.ind) return false;
       if (q) {
-        const u = users.find(x => x.id === e.uid);
+        const u = userMap.get(e.uid);
         const ind = IMAP[e.ind];
         const hay = `${u?.name || ''} ${u?.subject || ''} ${ind?.name || ''} ${e.type || ''} ${e.descr || ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
@@ -371,16 +475,12 @@ export function renderReviews(el, ctx) {
       revState.selectedId = filtered[0].id;
     }
     const sel = filtered.find(e => e.id === revState.selectedId) || filtered[0];
-    const owner = users.find(u => u.id === sel.uid);
-    const ind = IMAP[sel.ind];
-    const isOwn = sel.uid === me.id;
-    const isImg = sel.fpath && /\.(png|jpe?g)(\?|$)/i.test(sel.fpath);
 
     zone.innerHTML = `
       <div class="review-split">
         <div class="review-queue-list" role="listbox" aria-label="Arizalar navbati">
           ${filtered.map(e => {
-            const u = users.find(x => x.id === e.uid);
+            const u = userMap.get(e.uid);
             return `
               <button type="button" class="review-queue-item ${e.id === sel.id ? 'active' : ''}" data-q-id="${e.id}">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">
@@ -397,106 +497,44 @@ export function renderReviews(el, ctx) {
           }).join('')}
         </div>
 
-        <div class="card" id="rev-detail-pane">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid var(--border)">
-            <div style="display:flex;align-items:center;gap:12px">
-              ${avatarHtml(owner?.name || '?', 'lg')}
-              <div>
-                <div style="font-size:16px;font-weight:700">${esc(owner?.name || 'Noma’lum')}</div>
-                <div style="font-size:12.5px;color:var(--text-muted)">${esc(owner?.subject || 'Pedagog')} · ${formatDateUz(sel.date)}</div>
-              </div>
-            </div>
-            <div style="text-align:right">
-              ${badgeStatus(sel.status)}
-              <div style="font-size:20px;font-weight:700;color:var(--primary);margin-top:4px">+${sel.pts} ball</div>
-            </div>
-          </div>
-
-          <div class="stack-v" style="gap:14px;margin-top:16px">
-            <div style="padding:12px 14px;border-radius:10px;background:var(--bg-subtle);border:1px solid var(--border)">
-              <div style="font-size:12px;color:var(--text-muted)">Mezon va yutuq turi</div>
-              <div style="font-weight:600;margin-top:2px">${sel.ind}. ${esc(ind?.name || '')} (maks: ${ind?.max || 0} ball)</div>
-              <div style="font-size:13px;color:var(--primary);margin-top:3px">${esc(sel.type)} × ${sel.qty} ta</div>
-              <div style="font-size:11.5px;color:var(--text-muted);margin-top:4px">Mas’ul: ${esc(ind?.respStr || '')}</div>
-            </div>
-
-            <div>
-              <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:4px">Pedagog tavsifi</div>
-              <div style="font-size:13.5px;line-height:1.55;color:var(--text)">${esc(sel.descr)}</div>
-            </div>
-
-            <div>
-              <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px">Tasdiqlovchi hujjat</div>
-              ${sel.fpath ? `
-                <div style="display:flex;flex-direction:column;gap:8px">
-                  ${isImg ? `<img src="${esc(sel.fpath)}" alt="Tasdiqlovchi hujjat" style="max-height:240px;width:100%;object-fit:contain;border-radius:10px;border:1px solid var(--border);background:var(--bg-subtle)">` : ''}
-                  <div>
-                    <a href="${esc(sel.fpath)}" target="_blank" rel="noopener" class="btn btn-secondary btn-sm">${icon('external-link', 14)} Hujjatni alohida oynada ochish (${esc(sel.fname || 'Fayl')})</a>
-                  </div>
-                </div>
-              ` : '<span style="font-size:13px;color:var(--text-muted)">Hujjat biriktirilmagan</span>'}
-            </div>
-
-            ${isOwn && !isDirector ? `
-              <div class="form-alert warning">
-                ${icon('shield', 16)}
-                <span>O‘z yutug‘ingizni tasdiqlay olmaysiz. Uni boshqa mas’ul ekspert yoki direktor ko‘rib chiqadi.</span>
-              </div>
-            ` : `
-              <div class="field" style="padding-top:8px;border-top:1px solid var(--border)">
-                <label for="rev-inline-note">Ekspert izohi (rad etilganda sabab majburiy)</label>
-                <textarea id="rev-inline-note" class="input" rows="2" placeholder="Izoh yoki rad etish sababini yozing…">${esc(sel.note || '')}</textarea>
-              </div>
-              <div style="display:flex;gap:10px;flex-wrap:wrap">
-                ${sel.status !== 'approved' ? `<button type="button" class="btn btn-success" id="rev-do-approve" style="flex:1">${icon('check', 15)} Tasdiqlash</button>` : ''}
-                ${sel.status !== 'rejected' ? `<button type="button" class="btn btn-danger" id="rev-do-reject" style="flex:1">${icon('x', 15)} Rad etish</button>` : ''}
-              </div>
-            `}
-          </div>
-        </div>
+        <div class="card hide-xs" id="rev-detail-pane">${buildDetailHtml(sel)}</div>
       </div>
     `;
 
+    const pane = $('#rev-detail-pane', zone);
+    if (pane) bindDecisionHandlers(pane, sel);
+
     $$('[data-q-id]', zone).forEach(btn => {
-      btn.onclick = () => { revState.selectedId = Number(btn.dataset.qId); renderSplit(); };
+      btn.onclick = () => {
+        const id = Number(btn.dataset.qId);
+        revState.selectedId = id;
+        const picked = filtered.find(x => x.id === id);
+        if (window.innerWidth < 768 && picked) {
+          openDetailDrawer({
+            title: 'Arizani ko‘rib chiqish',
+            subtitle: `${picked.ind}. ${IMAP[picked.ind]?.name || ''}`,
+            bodyHtml: buildDetailHtml(picked),
+            onMount: panel => bindDecisionHandlers(panel, picked, () => closeModal(true))
+          });
+        } else {
+          renderSplit();
+        }
+      };
     });
-
-    const handleDecision = async status => {
-      const note = ($('#rev-inline-note')?.value || '').trim();
-      if (status === 'rejected' && !note) {
-        return toast('Rad etish uchun sabab kiritilishi shart.', 'warning');
-      }
-      const b1 = $('#rev-do-approve');
-      const b2 = $('#rev-do-reject');
-      if (b1) b1.disabled = true;
-      if (b2) b2.disabled = true;
-      try {
-        await api.reviewEntry(sel.id, status, note, me.id);
-        toast(status === 'approved' ? 'Yutuq muvaffaqiyatli tasdiqlandi.' : 'Ariza rad etildi.', status === 'approved' ? 'success' : 'info');
-        await ctx.refresh();
-      } catch (err) {
-        toast('Xatolik: ' + err.message, 'error');
-        if (b1) b1.disabled = false;
-        if (b2) b2.disabled = false;
-      }
-    };
-
-    const appBtn = $('#rev-do-approve');
-    if (appBtn) appBtn.onclick = () => handleDecision('approved');
-    const rejBtn = $('#rev-do-reject');
-    if (rejBtn) rejBtn.onclick = () => handleDecision('rejected');
   }
 
   $$('[data-rev-st]').forEach(btn => {
     btn.onclick = () => {
       revState.status = btn.dataset.revSt;
       $$('[data-rev-st]').forEach(b => b.classList.toggle('active', b.dataset.revSt === revState.status));
+      syncLiquidPills(el);
       renderSplit();
     };
   });
   $('#rev-search').oninput = e => { revState.search = e.target.value; renderSplit(); };
   $('#rev-ind').onchange = e => { revState.ind = e.target.value; renderSplit(); };
 
+  syncLiquidPills(el);
   renderSplit();
 }
 
@@ -513,7 +551,7 @@ export function renderCriteria(el, ctx) {
           <h1 class="page-title">Baholash mezonlari (26-AF buyruq)</h1>
           <p class="page-desc">3 ta bo‘lim, 15 ta indikator va jami 130 ballik rasmiy baholash tizimi.</p>
         </div>
-        ${['teacher', 'reviewer'].includes(ctx.me.role)
+        ${ctx.me.role === 'teacher'
           ? `<div class="page-actions"><button type="button" class="btn btn-primary" id="crit-add-btn">${icon('plus', 15)} Yutuq kiritish</button></div>`
           : ''}
       </div>
@@ -572,7 +610,7 @@ export function renderCriteria(el, ctx) {
             </div>
             <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:12px">
               ${i.types.map(t => `
-                <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:6px 10px;border-radius:7px;background:var(--bg-subtle)">
+                <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:6px 10px;border-radius:8px;background:var(--surface-soft)">
                   <span>${esc(t[0])}</span>
                   <b style="color:var(--primary)">+${t[1]} ball</b>
                 </div>
@@ -594,10 +632,12 @@ export function renderCriteria(el, ctx) {
     btn.onclick = () => {
       critState.sec = btn.dataset.csec;
       $$('[data-csec]').forEach(b => b.classList.toggle('active', b.dataset.csec === critState.sec));
+      syncLiquidPills(el);
       renderCritZone();
     };
   });
   $('#crit-search').oninput = e => { critState.search = e.target.value; renderCritZone(); };
 
+  syncLiquidPills(el);
   renderCritZone();
 }

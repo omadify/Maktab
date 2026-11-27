@@ -1,4 +1,4 @@
-// Global Command Palette (Ctrl/Cmd+K + Keyboard Nav) & Real Notification Center
+// Global Command Palette (Ctrl/Cmd+K + Keyboard Nav) & Real Notification Center V6
 import { IND, IMAP, getDeadlines, getRanking } from './config.js';
 import { api } from './api.js';
 import { icon } from './icons.js';
@@ -22,33 +22,38 @@ export function markLocalNotifRead(id) {
 }
 
 export function buildNotifications(ctx) {
-  const { me, entries, serverNotifications = [] } = ctx;
+  const { me, entries, appeals = [], devGoals = [], serverNotifications = [] } = ctx;
+  const prefs = me.preferences?.notif_prefs || {};
   const items = [];
   const seenKeys = new Set();
   const localRead = getLocalReadSet();
   const deadlines = getDeadlines();
 
-  // 1. Authoritative server notifications (V4)
+  // 1. Authoritative server notifications
   for (const sn of serverNotifications) {
     const key = `srv_${sn.id}`;
     seenKeys.add(`${sn.kind}:${sn.ref_id}`);
+    const isAppeal = String(sn.kind || '').startsWith('appeal');
+    if (isAppeal && prefs.appeals === false) continue;
+    if (!isAppeal && prefs.reviews === false) continue;
     items.push({
       id: key,
       serverId: sn.id,
       read: Boolean(sn.is_read),
       tone: sn.kind === 'entry_approved' ? 'success' : (sn.kind === 'entry_rejected' ? 'error' : 'primary'),
-      icon: sn.kind === 'entry_approved' ? 'check-circle' : (sn.kind === 'entry_rejected' ? 'x-circle' : 'bell'),
+      icon: sn.kind === 'entry_approved' ? 'check-circle' : (sn.kind === 'entry_rejected' ? 'x-circle' : (isAppeal ? 'message-square' : 'bell')),
       title: sn.title,
       desc: sn.body || formatDateTimeTashkent(sn.created_at),
       action: () => {
         api.markNotificationRead(sn.id);
-        ctx.navigate(me.role === 'director' || me.role === 'it_admin' ? 'dashboard' : 'my_results');
+        if (isAppeal) ctx.navigate('appeals');
+        else ctx.navigate(me.role === 'director' || me.role === 'it_admin' ? 'dashboard' : 'my_results');
       }
     });
   }
 
   // 2. Pending review tasks for Director & Reviewer
-  if (me.role === 'director' || me.role === 'reviewer') {
+  if ((me.role === 'director' || me.role === 'reviewer') && prefs.reviews !== false) {
     const pending = entries.filter(e => {
       if (e.status !== 'pending') return false;
       if (me.role === 'director') return true;
@@ -69,8 +74,25 @@ export function buildNotifications(ctx) {
     }
   }
 
-  // 3. Derived entry updates (deduplicated against server notifications)
-  if (me.role === 'teacher' || me.role === 'reviewer') {
+  // 3. Open appeals waiting for action
+  if ((me.role === 'director' || me.role === 'reviewer') && prefs.appeals !== false) {
+    const openAppeals = appeals.filter(a => a.status === 'new' || a.status === 'in_review' || a.status === 'needs_info');
+    if (openAppeals.length > 0) {
+      const id = `open_appeals_${openAppeals.length}`;
+      items.push({
+        id,
+        read: localRead.has(id),
+        tone: 'primary',
+        icon: 'message-square',
+        title: `${openAppeals.length} ta ochiq murojaat mavjud`,
+        desc: 'Murojaatlar va apellyatsiyalar markazi',
+        action: () => { markLocalNotifRead(id); ctx.navigate('appeals'); }
+      });
+    }
+  }
+
+  // 4. Derived entry updates (deduplicated against server notifications, teachers only)
+  if (me.role === 'teacher' && prefs.reviews !== false) {
     const myRecent = entries
       .filter(e => e.uid === me.id && (e.status === 'approved' || e.status === 'rejected'))
       .slice(0, 4);
@@ -91,7 +113,28 @@ export function buildNotifications(ctx) {
     }
   }
 
-  // 4. Security reminder if must_change
+  // 5. Personal development goal upcoming deadlines (real user goals within 7 days)
+  if (prefs.goals !== false && Array.isArray(devGoals) && devGoals.length > 0) {
+    const nowMs = Date.now();
+    for (const g of devGoals) {
+      if (g.status !== 'active' || !g.target_date) continue;
+      const diffDays = Math.ceil((new Date(g.target_date).getTime() - nowMs) / 86400000);
+      if (diffDays >= 0 && diffDays <= 7) {
+        const id = `goal_dl_${g.id}_${g.target_date}`;
+        items.push({
+          id,
+          read: localRead.has(id),
+          tone: diffDays <= 2 ? 'warning' : 'primary',
+          icon: 'target',
+          title: `Maqsad muddati: ${g.title}`,
+          desc: diffDays === 0 ? 'Bugun yakunlanadi' : `${diffDays} kun qoldi (${g.target_date})`,
+          action: () => { markLocalNotifRead(id); ctx.navigate('dev_plan'); }
+        });
+      }
+    }
+  }
+
+  // 6. Security reminder if must_change
   if (me.must_change) {
     items.push({
       id: 'sec_must_change',
@@ -104,31 +147,33 @@ export function buildNotifications(ctx) {
     });
   }
 
-  // 5. Deadlines
-  const d20Id = `dl20_${deadlines.d20Label}`;
-  items.push({
-    id: d20Id,
-    read: localRead.has(d20Id),
-    tone: deadlines.n20 <= 3 ? 'warning' : 'primary',
-    icon: 'calendar',
-    title: `Mas’ullarga topshirish: ${deadlines.d20Label}`,
-    desc: `${deadlines.n20} kun qoldi (har oyning 20-sanasi)`,
-    action: () => {
-      markLocalNotifRead(d20Id);
-      ctx.navigate(['director', 'it_admin'].includes(me.role) ? 'reports' : 'add_entry');
-    }
-  });
+  // 7. Official Deadlines
+  if (prefs.deadlines !== false) {
+    const d20Id = `dl20_${deadlines.d20Label}`;
+    items.push({
+      id: d20Id,
+      read: localRead.has(d20Id),
+      tone: deadlines.n20 <= 3 ? 'warning' : 'primary',
+      icon: 'calendar',
+      title: `Mas’ullarga topshirish: ${deadlines.d20Label}`,
+      desc: `${deadlines.n20} kun qoldi (har oyning 20-sanasi)`,
+      action: () => {
+        markLocalNotifRead(d20Id);
+        ctx.navigate(['director', 'it_admin'].includes(me.role) ? 'reports' : 'add_entry');
+      }
+    });
 
-  const d25Id = `dl25_${deadlines.d25Label}`;
-  items.push({
-    id: d25Id,
-    read: localRead.has(d25Id),
-    tone: 'neutral',
-    icon: 'file-text',
-    title: `Yakuniy hisobot muddati: ${deadlines.d25Label}`,
-    desc: `${deadlines.n25} kun qoldi (har oyning 25-sanasi)`,
-    action: () => { markLocalNotifRead(d25Id); ctx.navigate('ranking'); }
-  });
+    const d25Id = `dl25_${deadlines.d25Label}`;
+    items.push({
+      id: d25Id,
+      read: localRead.has(d25Id),
+      tone: 'neutral',
+      icon: 'file-text',
+      title: `Yakuniy hisobot muddati: ${deadlines.d25Label}`,
+      desc: `${deadlines.n25} kun qoldi (har oyning 25-sanasi)`,
+      action: () => { markLocalNotifRead(d25Id); ctx.navigate('ranking'); }
+    });
+  }
 
   return items;
 }
@@ -143,9 +188,9 @@ export function openGlobalSearch(ctx) {
     title: 'Buyruqlar va tezkor qidiruv',
     size: 'lg',
     bodyHtml: `
-      <div class="command-input-row" style="margin:-24px -24px 12px;background:var(--bg-subtle)">
+      <div class="command-input-row" style="margin:-24px -24px 12px;background:var(--surface-soft)">
         ${icon('search', 17)}
-        <input id="cmd-search-input" class="command-input" type="search" placeholder="Sahifa, pedagog, mezon yoki hisobot nomini yozing…" autocomplete="off">
+        <input id="cmd-search-input" class="command-input" type="search" placeholder="Sahifa, pedagog, mezon yoki tezkor amal…" autocomplete="off">
         <span class="kbd-hint">↑↓ Enter</span>
       </div>
       <div id="cmd-results" class="command-results" style="padding:0;max-height:360px" role="listbox"></div>
@@ -171,24 +216,47 @@ export function openGlobalSearch(ctx) {
         // 1. Permitted Pages
         const matchedPages = navPages
           .filter(p => !query || p.label.toLowerCase().includes(query))
-          .slice(0, query ? 5 : 4);
+          .slice(0, query ? 6 : 5);
         if (matchedPages.length) {
           groups.push({
             label: 'Sahifalar',
             items: matchedPages.map(p => ({
               html: `
                 <div style="display:flex;align-items:center;gap:10px">
-                  <span style="color:var(--text-muted)">${icon(p.icon, 16)}</span>
+                  <span style="color:var(--primary)">${icon(p.icon, 16)}</span>
                   <span style="font-size:13.5px;font-weight:500">${esc(p.label)}</span>
                 </div>
-                <span style="font-size:11.5px;color:var(--text-muted)">Sahifaga o‘tish</span>
+                <span style="font-size:11.5px;color:var(--text-muted)">O‘tish</span>
               `,
-              onSelect: () => { closeModal(); navigate(p.id, p.id === 'profile' ? { uid: me.id } : {}); }
+              onSelect: () => { closeModal(true); navigate(p.id, p.id === 'profile' ? { uid: me.id } : {}); }
             }))
           });
         }
 
-        // 2. Teachers (Permission-scoped)
+        // 2. Quick Actions
+        const quickCmds = [
+          { label: 'Mening profilimni ochish', kw: 'profil avatar bio', iconName: 'user', fn: () => openProfile(me.id) },
+          { label: 'Mavzuni almashtirish (Yorug‘ / Qorong‘i)', kw: 'mavzu tema dark light', iconName: 'moon', fn: () => ctx.toggleTheme() },
+          { label: 'Ma’lumotlarni yangilash', kw: 'yangilash sync refresh', iconName: 'refresh-cw', fn: () => ctx.refresh() }
+        ].filter(c => !query || c.label.toLowerCase().includes(query) || c.kw.includes(query));
+
+        if (quickCmds.length && query.length >= 1) {
+          groups.push({
+            label: 'Tezkor amallar',
+            items: quickCmds.map(c => ({
+              html: `
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span style="color:var(--text-muted)">${icon(c.iconName, 16)}</span>
+                  <span style="font-size:13.5px;font-weight:500">${esc(c.label)}</span>
+                </div>
+                <span style="font-size:11.5px;color:var(--primary)">Amal</span>
+              `,
+              onSelect: () => { closeModal(true); c.fn(); }
+            }))
+          });
+        }
+
+        // 3. Teachers (Permission-scoped)
         const searchableUsers = canSeeStaffUsers
           ? users.filter(u => u.active)
           : users.filter(u => u.active && u.ranked);
@@ -205,7 +273,7 @@ export function openGlobalSearch(ctx) {
               return {
                 html: `
                   <div style="display:flex;align-items:center;gap:10px;min-width:0">
-                    ${avatarHtml(u.name, 'sm')}
+                    ${avatarHtml(u.name, 'sm', u.avatar_url)}
                     <div style="min-width:0">
                       <div style="font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(u.name)}</div>
                       <div style="font-size:12px;color:var(--text-muted)">${esc(u.subject || 'Pedagog')}</div>
@@ -213,13 +281,13 @@ export function openGlobalSearch(ctx) {
                   </div>
                   <span class="badge badge-neutral">${rk ? `#${rk.rank} · ${rk.T} ball` : 'Reytingdan tashqari'}</span>
                 `,
-                onSelect: () => { closeModal(); openProfile(u.id); }
+                onSelect: () => { closeModal(true); openProfile(u.id); }
               };
             })
           });
         }
 
-        // 3. 26-AF Criteria
+        // 4. 26-AF Criteria
         const matchedInd = IND
           .filter(i => !query || i.name.toLowerCase().includes(query) || i.doc.toLowerCase().includes(query) || String(i.id) === query)
           .slice(0, 4);
@@ -238,12 +306,12 @@ export function openGlobalSearch(ctx) {
                 </div>
                 <span style="font-size:12px;font-weight:600;color:var(--text-muted)">Maks: ${i.max}</span>
               `,
-              onSelect: () => { closeModal(); navigate('criteria', { highlightInd: i.id }); }
+              onSelect: () => { closeModal(true); navigate('criteria', { highlightInd: i.id }); }
             }))
           });
         }
 
-        // 4. Permitted entries (when query >= 2 chars)
+        // 5. Permitted entries (when query >= 2 chars)
         if (query.length >= 2) {
           const visibleEntries = entries.filter(e => {
             if (me.role === 'director') return true;
@@ -274,7 +342,7 @@ export function openGlobalSearch(ctx) {
                     <span class="badge ${e.status === 'approved' ? 'badge-success' : (e.status === 'rejected' ? 'badge-error' : 'badge-warning')}">+${e.pts}</span>
                   `,
                   onSelect: () => {
-                    closeModal();
+                    closeModal(true);
                     if (e.status === 'pending' && ['director', 'reviewer'].includes(me.role)) {
                       navigate('reviews');
                     } else {

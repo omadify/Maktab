@@ -1,4 +1,4 @@
-// User Management Pro (KPIs, User Details Drawer, Safe Import Preview, Privilege Protection), Report Center & Settings
+// User Management Pro, Report Center & 2-Column V6 Settings (Appearance, Notifications, Security, Active Sessions)
 import { IND, ROLE, IMAP, SEC, getRanking, extractSubjectLabel, makeLogin } from '../config.js';
 import { api, isV4SecurityActive } from '../api.js';
 import { icon } from '../icons.js';
@@ -14,23 +14,40 @@ import {
   closeModal,
   confirmDialog,
   avatarHtml,
+  renderSwitchHtml,
   emptyStateHtml,
   getThemePref,
   applyTheme,
+  getTransparencyPref,
+  applyTransparencyPref,
   formatDateTimeTashkent
 } from '../ui.js';
+import { syncLiquidPills } from '../motion.js';
 import { exportRankingCSV } from './ranking.js';
 
 let adminState = { tab: 'users', search: '', roleFilter: 'all' };
 let reportState = { startDate: '', endDate: '' };
+let settingsSection = 'appearance';
+
+export function resetAdminViewState() {
+  adminState = { tab: 'users', search: '', roleFilter: 'all' };
+  reportState = { startDate: '', endDate: '' };
+  settingsSection = 'appearance';
+}
+
+function triggerBlobDownload(filename, content) {
+  const b = new Blob(['\ufeff' + content], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(b);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 function downloadCredsCSV(list) {
   const rows = list.map(c => [c.login, c.pw, c.name, c.subject || ''].map(csvCell).join(';'));
-  const b = new Blob(['\ufeffLogin;Vaqtinchalik Parol;F.I.Sh.;Fan\n' + rows.join('\n')], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(b);
-  a.download = 'pedagoglar_parollari.csv';
-  a.click();
+  triggerBlobDownload('pedagoglar_parollari.csv', 'Login;Vaqtinchalik Parol;F.I.Sh.;Fan\n' + rows.join('\n'));
   toast('Vaqtinchalik parollar CSV faylda yuklab olindi.', 'success');
 }
 
@@ -98,11 +115,11 @@ export function renderAdmin(el, ctx) {
         <div class="kpi-card">
           <div class="kpi-top"><span class="kpi-label">Hozir faol (onlayn)</span><span class="kpi-icon">${icon('radio', 16)}</span></div>
           <div class="kpi-value-row"><span class="kpi-value">${monitoring?.available ? onlineNow : '—'}</span><span class="kpi-unit">${monitoring?.available ? 'nafar' : ''}</span></div>
-          <div class="kpi-foot"><span>${monitoring?.available ? 'So‘nggi 2 daqiqada' : 'V4 migratsiyadan so‘ng'}</span></div>
+          <div class="kpi-foot"><span>${monitoring?.available ? 'So‘nggi 2 daqiqada' : 'Migratsiyadan so‘ng'}</span></div>
         </div>
         <div class="kpi-card">
           <div class="kpi-top"><span class="kpi-label">Xavfsizlik holati</span><span class="kpi-icon ${isV4SecurityActive() ? 'success' : 'warning'}">${icon('shield', 16)}</span></div>
-          <div class="kpi-value-row"><span class="kpi-value" style="font-size:18px">${isV4SecurityActive() ? 'V4 Himoyalangan' : 'Bazaviy rejim'}</span></div>
+          <div class="kpi-value-row"><span class="kpi-value" style="font-size:18px">${isV4SecurityActive() ? 'Himoyalangan' : 'Bazaviy rejim'}</span></div>
           <div class="kpi-foot"><span>${users.filter(u => u.active && u.must_change).length} ta parol almashtirishi kerak</span></div>
         </div>
       </div>
@@ -125,6 +142,8 @@ export function renderAdmin(el, ctx) {
   $$('[data-atab]').forEach(btn => {
     btn.onclick = () => { adminState.tab = btn.dataset.atab; renderAdmin(el, ctx); };
   });
+
+  syncLiquidPills(el);
 
   const body = $('#admin-tab-body');
   if (adminState.tab === 'users') renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector);
@@ -191,7 +210,7 @@ function renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector) {
                 <tr style="${u.active ? '' : 'opacity:0.55'}">
                   <td>
                     <div style="display:flex;align-items:center;gap:10px;cursor:pointer" data-u-drawer="${u.id}">
-                      ${avatarHtml(u.name, 'sm')}
+                      ${avatarHtml(u.name, 'sm', u.avatar_url)}
                       <div>
                         <div style="font-weight:600;display:flex;align-items:center;gap:6px">
                           <span class="presence-dot ${dotClass}" title="${isOnline ? 'Onlayn' : (isRecent ? 'Yaqinda faol' : 'Oflayn')}"></span>
@@ -211,7 +230,7 @@ function renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector) {
                       }).join('')}
                     </select>
                   </td>
-                  <td><input type="checkbox" class="checkbox" data-u-ranked="${u.id}" ${u.ranked ? 'checked' : ''} aria-label="Reytingda qatnashadi"></td>
+                  <td><input type="checkbox" class="checkbox" data-u-ranked="${u.id}" ${u.ranked && u.role === 'teacher' ? 'checked' : ''} ${u.role !== 'teacher' ? 'disabled title="Faqat pedagoglar reytingda qatnashadi"' : ''} aria-label="Reytingda qatnashadi"></td>
                   <td style="font-size:12px;color:var(--text-muted)">${pr?.last_seen_at ? formatDateTimeTashkent(pr.last_seen_at) : (u.last_login_at ? formatDateTimeTashkent(u.last_login_at) : '—')}</td>
                   <td><span class="badge ${u.active ? 'badge-success' : 'badge-neutral'}">${u.active ? 'Faol' : 'O‘chirilgan'}</span></td>
                   <td style="text-align:right">
@@ -237,7 +256,7 @@ function renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector) {
             <div class="card card-compact" style="box-shadow:none;${u.active ? '' : 'opacity:0.6'}">
               <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px">
                 <div style="display:flex;align-items:center;gap:10px;min-width:0" data-u-drawer="${u.id}">
-                  ${avatarHtml(u.name, 'sm')}
+                  ${avatarHtml(u.name, 'sm', u.avatar_url)}
                   <div style="min-width:0">
                     <div style="font-weight:600;font-size:14px">${esc(u.name)}</div>
                     <div style="font-size:12px;color:var(--text-muted)"><code>${esc(u.login)}</code> · ${esc(ROLE[u.role] || u.role)}</div>
@@ -269,7 +288,7 @@ function renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector) {
           subtitle: `${ROLE[u.role] || u.role} · @${u.login}`,
           bodyHtml: `
             <div class="stack-v" style="gap:16px">
-              <div style="padding:14px;border-radius:12px;background:var(--bg-subtle);border:1px solid var(--border);font-size:13px;display:flex;flex-direction:column;gap:6px">
+              <div style="padding:14px;border-radius:12px;background:var(--surface-soft);border:1px solid var(--border);font-size:13px;display:flex;flex-direction:column;gap:6px">
                 <div><b>Sinf / Fan:</b> ${esc(u.subject || '—')}</div>
                 <div><b>Holat:</b> ${u.active ? 'Faol' : 'O‘chirilgan'} · <b>Reytingda:</b> ${u.ranked ? 'Ha' : 'Yo‘q'}</div>
                 <div><b>Oxirgi kirish:</b> ${formatDateTimeTashkent(pr?.last_login_at || u.last_login_at)}</div>
@@ -294,7 +313,7 @@ function renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector) {
           `,
           footerHtml: `<button type="button" class="btn btn-primary" id="ud-prof">Profilni ochish</button>`,
           onMount: panel => {
-            panel.querySelector('#ud-prof').onclick = () => { closeModal(); ctx.openProfile(u.id); };
+            panel.querySelector('#ud-prof').onclick = () => { closeModal(true); ctx.openProfile(u.id); };
           }
         });
       };
@@ -302,6 +321,7 @@ function renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector) {
 
     $$('[data-u-role]', zone).forEach(sel => {
       sel.onchange = async () => {
+        sel.disabled = true;
         try {
           await api.updateUser(Number(sel.dataset.uRole), { role: sel.value });
           toast('Rol yangilandi (eski sessiyalar bekor qilindi).', 'success');
@@ -315,11 +335,15 @@ function renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector) {
 
     $$('[data-u-ranked]', zone).forEach(chk => {
       chk.onchange = async () => {
+        const prev = !chk.checked;
+        chk.disabled = true;
         try {
           await api.updateUser(Number(chk.dataset.uRanked), { ranked: chk.checked ? 1 : 0 });
           toast('Reyting holati saqlandi.', 'success');
           await ctx.refresh();
         } catch (err) {
+          chk.checked = prev;
+          chk.disabled = false;
           toast('Xatolik: ' + err.message, 'error');
         }
       };
@@ -329,8 +353,9 @@ function renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector) {
       btn.onclick = () => {
         const u = users.find(x => x.id === Number(btn.dataset.uEdit));
         if (!u) return;
-        openModal({
+        openDetailDrawer({
           title: 'Foydalanuvchini tahrirlash',
+          subtitle: `@${u.login}`,
           bodyHtml: `
             <div class="stack-v" style="gap:14px">
               <div class="field"><label for="eu-name">F.I.Sh.</label><input id="eu-name" class="input" value="${esc(u.name)}" required></div>
@@ -349,7 +374,7 @@ function renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector) {
           `,
           footerHtml: `<button type="button" class="btn btn-secondary" id="eu-cancel">Bekor qilish</button><button type="button" class="btn btn-primary" id="eu-save">Saqlash</button>`,
           onMount: panel => {
-            panel.querySelector('#eu-cancel').onclick = closeModal;
+            panel.querySelector('#eu-cancel').onclick = () => closeModal(true);
             panel.querySelector('#eu-save').onclick = async () => {
               const name = panel.querySelector('#eu-name').value.trim();
               if (!name) return toast('F.I.Sh. kiritilishi shart.', 'warning');
@@ -360,7 +385,7 @@ function renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector) {
                   role: panel.querySelector('#eu-role').value,
                   ranked: panel.querySelector('#eu-ranked').checked ? 1 : 0
                 });
-                closeModal();
+                closeModal(true);
                 toast('Ma’lumotlar yangilandi.', 'success');
                 await ctx.refresh();
               } catch (err) {
@@ -389,7 +414,7 @@ function renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector) {
             bodyHtml: `
               <div class="stack-v" style="gap:12px">
                 <p style="margin:0;color:var(--text-2)">Ushbu parol faqat bir marta ko‘rsatiladi. Pedagog birinchi kirishda uni yangilaydi.</p>
-                <div style="padding:14px;border-radius:10px;background:var(--bg-subtle);border:1px solid var(--border);display:flex;flex-direction:column;gap:6px">
+                <div style="padding:14px;border-radius:10px;background:var(--surface-soft);border:1px solid var(--border);display:flex;flex-direction:column;gap:6px">
                   <div><b>F.I.Sh.:</b> ${esc(res.name)}</div>
                   <div><b>Login:</b> <code>${esc(res.login)}</code></div>
                   <div><b>Parol:</b> <code style="font-size:14px;font-weight:700">${esc(res.pw)}</code></div>
@@ -398,7 +423,7 @@ function renderUsersListTab(body, ctx, presenceMap, nowMs, isDirector) {
             `,
             footerHtml: `<button type="button" class="btn btn-secondary" id="copy-pw-btn">${icon('copy', 14)} Nusxa olish</button><button type="button" class="btn btn-primary" id="close-pw-m">Yopish</button>`,
             onMount: panel => {
-              panel.querySelector('#close-pw-m').onclick = closeModal;
+              panel.querySelector('#close-pw-m').onclick = () => closeModal(true);
               panel.querySelector('#copy-pw-btn').onclick = async () => {
                 const copied = await copyToClipboard(`Login: ${res.login}\nParol: ${res.pw}`);
                 toast(copied ? 'Login va parol nusxalandi.' : 'Nusxalash imkoni bo‘lmadi — qo‘lda ko‘chirib oling.', copied ? 'success' : 'error');
@@ -648,11 +673,7 @@ export function renderReports(el, ctx) {
 
   function downloadCsv(filename, header, rows) {
     const body = rows.map(r => r.map(csvCell).join(';')).join('\n');
-    const b = new Blob(['\ufeff' + header + '\n' + body], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(b);
-    a.download = filename;
-    a.click();
+    triggerBlobDownload(filename, header + '\n' + body);
     toast(`${filename} yuklab olindi.`, 'success');
   }
 
@@ -802,23 +823,78 @@ export function renderReports(el, ctx) {
 }
 
 /* ==========================================================================
-   SETTINGS
+   V6 2-COLUMN SETTINGS EXPERIENCE
    ========================================================================== */
 export function renderSettings(el, ctx) {
   const { me } = ctx;
   const pref = getThemePref();
+  const transPref = getTransparencyPref();
+  const notifPrefs = me.preferences?.notif_prefs || { reviews: true, appeals: true, goals: true, deadlines: true };
+
+  const sections = [
+    { id: 'profile', label: 'Profil', icon: 'user' },
+    { id: 'appearance', label: 'Ko‘rinish', icon: 'sun' },
+    { id: 'notifications', label: 'Bildirishnomalar', icon: 'bell' },
+    { id: 'security', label: 'Xavfsizlik', icon: 'shield' },
+    { id: 'sessions', label: 'Sessiyalar', icon: 'laptop' },
+    { id: 'account', label: 'Hisob ma’lumotlari', icon: 'info' }
+  ];
 
   el.innerHTML = `
-    <div class="stack-v" style="max-width:760px">
+    <div class="stack-v" style="max-width:1020px">
       <div class="page-header">
         <div>
           <h1 class="page-title">Sozlamalar</h1>
-          <p class="page-desc">Interfeys mavzusi, sessiya ma’lumotlari va xavfsizlik.</p>
+          <p class="page-desc">Ko‘rinish, bildirishnomalar, faol sessiyalar va hisob xavfsizligi.</p>
         </div>
       </div>
 
+      <div class="settings-layout">
+        <nav class="card settings-nav" aria-label="Sozlamalar bo‘limlari">
+          ${sections.map(s => `
+            <button type="button" class="nav-item ${settingsSection === s.id ? 'active' : ''}" data-set-sec="${s.id}">
+              ${icon(s.icon, 16)}
+              <span class="nav-item-label">${esc(s.label)}</span>
+            </button>
+          `).join('')}
+        </nav>
+
+        <div id="settings-pane" class="stack-v"></div>
+      </div>
+    </div>
+  `;
+
+  $$('[data-set-sec]').forEach(btn => {
+    btn.onclick = () => {
+      settingsSection = btn.dataset.setSec;
+      renderSettings(el, ctx);
+    };
+  });
+
+  const pane = $('#settings-pane');
+
+  if (settingsSection === 'profile') {
+    pane.innerHTML = `
       <div class="card">
-        <div class="card-header"><div><h3 class="card-title">Mavzu (Theme)</h3><p class="card-subtitle">Yorug‘, qorong‘i yoki tizim sozlamasiga mos rejim</p></div></div>
+        <div class="card-header"><div><h3 class="card-title">Shaxsiy profil</h3><p class="card-subtitle">Avatar, muqova, bio va aloqa ma’lumotlarini boshqarish</p></div></div>
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px">
+          ${avatarHtml(me.name, 'lg', me.avatar_url)}
+          <div>
+            <div style="font-size:16px;font-weight:700">${esc(me.name)}</div>
+            <div style="font-size:13px;color:var(--text-muted)">${esc(me.subject || ROLE[me.role])}</div>
+          </div>
+        </div>
+        <button type="button" class="btn btn-primary" id="set-go-prof">${icon('user', 15)} Profil sahifasini ochish</button>
+      </div>
+    `;
+    $('#set-go-prof', pane).onclick = () => ctx.openProfile(me.id);
+    return;
+  }
+
+  if (settingsSection === 'appearance') {
+    pane.innerHTML = `
+      <div class="card">
+        <div class="card-header"><div><h3 class="card-title">Mavzu (Theme)</h3><p class="card-subtitle">Yorug‘, qorong‘i yoki qurilma tizimiga mos rejim</p></div></div>
         <div class="tabs-pill">
           <button type="button" class="tab-btn ${pref === 'light' ? 'active' : ''}" data-theme-pref="light">${icon('sun', 14)} Yorug‘</button>
           <button type="button" class="tab-btn ${pref === 'dark' ? 'active' : ''}" data-theme-pref="dark">${icon('moon', 14)} Qorong‘i</button>
@@ -827,28 +903,147 @@ export function renderSettings(el, ctx) {
       </div>
 
       <div class="card">
-        <div class="card-header"><div><h3 class="card-title">Hisob va xavfsizlik</h3><p class="card-subtitle">Shaxsiy ma’lumotlar va sessiya holati</p></div></div>
+        <div class="card-header"><div><h3 class="card-title">Liquid Glass shaffoflik darajasi</h3><p class="card-subtitle">Qurilma unumdorligi yoki yuqori kontrast ehtiyojiga moslash</p></div></div>
+        <div class="tabs-pill">
+          <button type="button" class="tab-btn ${transPref === 'glass' ? 'active' : ''}" data-trans-pref="glass">${icon('sparkles', 14)} Liquid Glass</button>
+          <button type="button" class="tab-btn ${transPref === 'reduced' ? 'active' : ''}" data-trans-pref="reduced">${icon('sliders', 14)} Yuqori kontrast (Shaffofliksiz)</button>
+        </div>
+      </div>
+    `;
+    $$('[data-theme-pref]', pane).forEach(btn => {
+      btn.onclick = () => {
+        applyTheme(btn.dataset.themePref);
+        api.updateMyPreferences({ theme: btn.dataset.themePref });
+        toast('Mavzu yangilandi.', 'success');
+        renderSettings(el, ctx);
+      };
+    });
+    $$('[data-trans-pref]', pane).forEach(btn => {
+      btn.onclick = () => {
+        applyTransparencyPref(btn.dataset.transPref);
+        toast('Shaffoflik sozlamasi saqlandi.', 'success');
+        renderSettings(el, ctx);
+      };
+    });
+    syncLiquidPills(pane);
+    return;
+  }
+
+  if (settingsSection === 'notifications') {
+    const rows = [
+      { key: 'reviews', title: 'Yutuqlar tasdiqlanishi va rad etilishi', desc: 'Arizalaringiz bo‘yicha ekspert qarori chiqqanda bildirishnoma olish' },
+      { key: 'appeals', title: 'Murojaatlar va apellyatsiya javoblari', desc: 'Murojaatingizga javob yoki holat o‘zgarishi kelganda xabar berish' },
+      { key: 'goals', title: 'Rivojlanish rejasi muddatlari', desc: 'Shaxsiy maqsadlaringiz muddati 7 kun ichida yaqinlashganda eslatma' },
+      { key: 'deadlines', title: 'Rasmiy hisobot muddatlari (20 va 25-sana)', desc: 'Har oylik hujjat topshirish va yakuniy hisobot eslatmalari' }
+    ];
+    pane.innerHTML = `
+      <div class="card">
+        <div class="card-header"><div><h3 class="card-title">Bildirishnoma sozlamalari</h3><p class="card-subtitle">Qaysi hodisalar bo‘yicha xabarnomalar ko‘rsatilishini tanlang</p></div></div>
+        <div class="stack-v" style="gap:12px">
+          ${rows.map(r => `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 14px;border-radius:12px;background:var(--surface-soft);border:1px solid var(--border)">
+              <div>
+                <div style="font-size:13.5px;font-weight:600">${esc(r.title)}</div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${esc(r.desc)}</div>
+              </div>
+              ${renderSwitchHtml({ id: `np-${r.key}`, checked: notifPrefs[r.key] !== false, label: r.title })}
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    rows.forEach(r => {
+      const sw = $(`#np-${r.key}`, pane);
+      sw.onclick = async () => {
+        const nextVal = sw.getAttribute('aria-checked') !== 'true';
+        sw.setAttribute('aria-checked', String(nextVal));
+        const nextPrefs = { ...notifPrefs, [r.key]: nextVal };
+        me.preferences = { ...(me.preferences || {}), notif_prefs: nextPrefs };
+        await api.updateMyPreferences({ notif_prefs: nextPrefs });
+        toast('Bildirishnoma sozlamasi saqlandi.', 'success');
+      };
+    });
+    return;
+  }
+
+  if (settingsSection === 'security') {
+    pane.innerHTML = `
+      <div class="card">
+        <div class="card-header"><div><h3 class="card-title">Xavfsizlik va parol</h3><p class="card-subtitle">Shaxsiy hisob himoyasini boshqarish</p></div></div>
         <div style="display:flex;flex-direction:column;gap:10px;font-size:13.5px;margin-bottom:18px">
-          <div style="display:flex;justify-content:space-between;padding:10px 12px;border-radius:8px;background:var(--bg-subtle)"><span style="color:var(--text-muted)">F.I.Sh.</span><b>${esc(me.name)}</b></div>
-          <div style="display:flex;justify-content:space-between;padding:10px 12px;border-radius:8px;background:var(--bg-subtle)"><span style="color:var(--text-muted)">Login</span><code>${esc(me.login)}</code></div>
-          <div style="display:flex;justify-content:space-between;padding:10px 12px;border-radius:8px;background:var(--bg-subtle)"><span style="color:var(--text-muted)">Rol</span><b>${esc(ROLE[me.role] || me.role)}</b></div>
-          <div style="display:flex;justify-content:space-between;padding:10px 12px;border-radius:8px;background:var(--bg-subtle)"><span style="color:var(--text-muted)">Autentifikatsiya rejimi</span><span class="badge ${isV4SecurityActive() ? 'badge-success' : 'badge-warning'}">${isV4SecurityActive() ? 'V4 Server Session' : 'Standart RPC'}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:11px 14px;border-radius:10px;background:var(--surface-soft)"><span style="color:var(--text-muted)">Autentifikatsiya rejimi</span><span class="badge ${isV4SecurityActive() ? 'badge-success' : 'badge-warning'}">${isV4SecurityActive() ? 'Server Session Token' : 'Standart RPC'}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:11px 14px;border-radius:10px;background:var(--surface-soft)"><span style="color:var(--text-muted)">Oxirgi kirish</span><b>${me.last_login_at ? formatDateTimeTashkent(me.last_login_at) : '—'}</b></div>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <button type="button" class="btn btn-primary" id="set-pw-btn">${icon('key', 15)} Parolni almashtirish</button>
           <button type="button" class="btn btn-danger" id="set-logout-btn">${icon('log-out', 15)} Tizimdan chiqish</button>
         </div>
       </div>
+    `;
+    $('#set-pw-btn', pane).onclick = () => ctx.openPasswordModal();
+    $('#set-logout-btn', pane).onclick = () => ctx.logout();
+    return;
+  }
+
+  if (settingsSection === 'sessions') {
+    pane.innerHTML = `<div class="card"><div class="skeleton" style="height:140px;width:100%"></div></div>`;
+    api.fetchMySessions().then(res => {
+      if (!res.available) {
+        pane.innerHTML = `<div class="card">${emptyStateHtml({ iconName: 'laptop', title: 'Faol sessiyalar ro‘yxati ulanmagan', desc: 'Ushbu bo‘lim V6 SQL migratsiyasi qo‘llangandan so‘ng faol qurilmalaringizni real vaqtda ko‘rsatadi.' })}</div>`;
+        return;
+      }
+      const list = res.rows || [];
+      pane.innerHTML = `
+        <div class="card">
+          <div class="card-header"><div><h3 class="card-title">Faol sessiyalar (${list.length})</h3><p class="card-subtitle">Hisobingizga kirilgan joriy va boshqa qurilmalar</p></div></div>
+          ${list.length === 0
+            ? emptyStateHtml({ iconName: 'laptop', title: 'Faol sessiyalar topilmadi', desc: 'Hozircha faol sessiya ma’lumoti mavjud emas.' })
+            : `<div class="stack-v" style="gap:10px">
+                ${list.map(s => `
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-radius:12px;background:var(--surface-soft);border:1px solid ${s.is_current ? 'var(--primary-border)' : 'var(--border)'};flex-wrap:wrap">
+                    <div style="display:flex;align-items:center;gap:12px">
+                      <div class="kpi-icon ${s.is_current ? 'primary' : ''}">${icon(s.device_type === 'mobile' ? 'smartphone' : 'laptop', 17)}</div>
+                      <div>
+                        <div style="font-size:13.5px;font-weight:600">${esc(s.browser || 'Brauzer')} · ${esc(s.os || 'OT')} ${s.is_current ? '<span class="badge badge-primary" style="margin-left:6px">Joriy qurilma</span>' : ''}</div>
+                        <div style="font-size:12px;color:var(--text-muted)">Oxirgi faoliyat: ${formatDateTimeTashkent(s.last_seen_at)} · Kirgan: ${formatDateTimeTashkent(s.created_at)}</div>
+                      </div>
+                    </div>
+                    ${!s.is_current ? `<button type="button" class="btn btn-danger btn-sm" data-rev-sess="${esc(s.id)}">Tugatish</button>` : ''}
+                  </div>
+                `).join('')}
+              </div>`}
+        </div>
+      `;
+      $$('[data-rev-sess]', pane).forEach(b => {
+        b.onclick = async () => {
+          b.disabled = true;
+          try {
+            await api.revokeMySession(b.dataset.revSess);
+            toast('Sessiya tugatildi.', 'success');
+            renderSettings(el, ctx);
+          } catch (err) {
+            toast(err.message, 'error');
+            b.disabled = false;
+          }
+        };
+      });
+    }).catch(err => {
+      pane.innerHTML = `<div class="card">${emptyStateHtml({ iconName: 'alert-circle', title: 'Xatolik', desc: err.message })}</div>`;
+    });
+    return;
+  }
+
+  // Account info
+  pane.innerHTML = `
+    <div class="card">
+      <div class="card-header"><div><h3 class="card-title">Hisob ma’lumotlari</h3><p class="card-subtitle">Tizimdagi rasmiy identifikator va lavozim</p></div></div>
+      <div style="display:flex;flex-direction:column;gap:10px;font-size:13.5px">
+        <div style="display:flex;justify-content:space-between;padding:11px 14px;border-radius:10px;background:var(--surface-soft)"><span style="color:var(--text-muted)">Foydalanuvchi ID</span><code>#${me.id}</code></div>
+        <div style="display:flex;justify-content:space-between;padding:11px 14px;border-radius:10px;background:var(--surface-soft)"><span style="color:var(--text-muted)">F.I.Sh.</span><b>${esc(me.name)}</b></div>
+        <div style="display:flex;justify-content:space-between;padding:11px 14px;border-radius:10px;background:var(--surface-soft)"><span style="color:var(--text-muted)">Login</span><code>${esc(me.login)}</code></div>
+        <div style="display:flex;justify-content:space-between;padding:11px 14px;border-radius:10px;background:var(--surface-soft)"><span style="color:var(--text-muted)">Fan / Lavozim</span><b>${esc(me.subject || '—')}</b></div>
+        <div style="display:flex;justify-content:space-between;padding:11px 14px;border-radius:10px;background:var(--surface-soft)"><span style="color:var(--text-muted)">Rol</span><b>${esc(ROLE[me.role] || me.role)}</b></div>
+      </div>
     </div>
   `;
-
-  $$('[data-theme-pref]').forEach(btn => {
-    btn.onclick = () => {
-      applyTheme(btn.dataset.themePref);
-      toast('Mavzu yangilandi.', 'success');
-      ctx.navigate('settings');
-    };
-  });
-  $('#set-pw-btn').onclick = () => ctx.openPasswordModal();
-  $('#set-logout-btn').onclick = () => ctx.logout();
 }
