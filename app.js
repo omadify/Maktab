@@ -1138,6 +1138,14 @@ function renderCredBox(list) {
 window.viewPortfolio = uid => { renderPort($('#main-view'), uid); };
 
 window.deleteEntry = async id => {
+  const target = STATE.entries.find(x => x.id === id);
+  if (!target) return;
+  if (target.status === 'approved' && ME?.role !== 'director') {
+    return alert('Tasdiqlangan yutuqni o‘chirib bo‘lmaydi!');
+  }
+  if (target.uid !== ME?.id && ME?.role !== 'director') {
+    return alert('Faqat o‘z arizangizni o‘chirishingiz mumkin!');
+  }
   if (!confirm('Ushbu arizani o‘chirishni xohlaysizmi?')) return;
   try {
     await api.deleteEntry(id);
